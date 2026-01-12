@@ -9,6 +9,45 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use windows::core::{w, Interface};
+use windows::Foundation::TypedEventHandler;
+use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
+use windows::Graphics::DirectX::DirectXPixelFormat;
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM};
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
+    D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAP_READ, D3D11_SDK_VERSION,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+};
+use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
+use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+};
+use windows::Win32::UI::Shell::{
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
+    EnumWindows, GetClientRect, GetCursorPos, GetMessageW, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, InsertMenuW, IsWindowVisible, LoadIconW,
+    PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
+    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDI_APPLICATION, MF_BYPOSITION, MF_STRING, MSG,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
+    WM_LBUTTONDBLCLK, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+};
+
+const HOTKEY_ID: i32 = 1;
+const TARGET_PROCESS: &str = "gakumas";
+const WM_TRAYICON: u32 = WM_USER + 1;
+const MENU_EXIT: usize = 1001;
+
 fn log(msg: &str) {
     let timestamp = Local::now().format("%H:%M:%S%.3f");
     let line = format!("[{}] {}\n", timestamp, msg);
@@ -21,76 +60,203 @@ fn log(msg: &str) {
         let _ = file.write_all(line.as_bytes());
     }
 }
-use windows::core::Interface;
-use windows::Foundation::TypedEventHandler;
-use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
-use windows::Graphics::DirectX::DirectXPixelFormat;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, TRUE};
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
-use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
-    D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAP_READ, D3D11_SDK_VERSION,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
-};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
-use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
-use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
-};
-use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetClientRect, GetMessageW, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-    TranslateMessage, MSG, WM_HOTKEY,
-};
 
-const HOTKEY_ID: i32 = 1;
-const TARGET_PROCESS: &str = "gakumas";
+static mut MAIN_HWND: HWND = HWND(std::ptr::null_mut());
 
 fn main() -> Result<()> {
-    unsafe { windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED)? };
+    unsafe {
+        windows::Win32::System::WinRT::RoInitialize(
+            windows::Win32::System::WinRT::RO_INIT_MULTITHREADED,
+        )?
+    };
 
-    println!("Gakumas Screenshot Tool");
-    println!("=======================");
-    println!("Hotkey: Ctrl+Shift+S");
-    println!("Press the hotkey to capture gakumas.exe client area");
-    println!("Press Ctrl+C to exit\n");
+    // Create hidden window for message handling
+    let hwnd = create_message_window()?;
+    unsafe { MAIN_HWND = hwnd };
+
+    // Add system tray icon
+    add_tray_icon(hwnd)?;
 
     // Register global hotkey: Ctrl+Shift+S
     unsafe {
         RegisterHotKey(
-            HWND::default(),
+            hwnd,
             HOTKEY_ID,
             MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
             0x53, // 'S' key
         )?;
     }
 
-    println!("Hotkey registered successfully. Waiting for input...\n");
+    log("Gakumas Screenshot Tool started");
+    log("Hotkey: Ctrl+Shift+S");
+    log("Right-click tray icon to exit");
 
     // Message loop
     let mut msg = MSG::default();
     unsafe {
         while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
-            if msg.message == WM_HOTKEY && msg.wParam.0 as i32 == HOTKEY_ID {
-                println!("Hotkey pressed! Capturing...");
-                match capture_gakumas() {
-                    Ok(path) => println!("Screenshot saved: {}\n", path.display()),
-                    Err(e) => eprintln!("Capture failed: {}\n", e),
-                }
-            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
 
-        let _ = UnregisterHotKey(HWND::default(), HOTKEY_ID);
+        // Cleanup
+        let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
+        remove_tray_icon(hwnd);
+        let _ = DestroyWindow(hwnd);
     }
 
     Ok(())
+}
+
+fn create_message_window() -> Result<HWND> {
+    unsafe {
+        let hinstance = GetModuleHandleW(None)?;
+        let class_name = w!("GakumasScreenshotClass");
+
+        let wc = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(window_proc),
+            hInstance: hinstance.into(),
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+
+        let atom = RegisterClassW(&wc);
+        if atom == 0 {
+            return Err(anyhow!("Failed to register window class"));
+        }
+
+        let hwnd = CreateWindowExW(
+            Default::default(),
+            class_name,
+            w!("Gakumas Screenshot"),
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            None,
+            None,
+            hinstance,
+            None,
+        )?;
+
+        Ok(hwnd)
+    }
+}
+
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_HOTKEY => {
+                if wparam.0 as i32 == HOTKEY_ID {
+                    log("Hotkey pressed! Capturing...");
+                    match capture_gakumas() {
+                        Ok(path) => log(&format!("Screenshot saved: {}", path.display())),
+                        Err(e) => log(&format!("Capture failed: {}", e)),
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_TRAYICON => {
+                let event = (lparam.0 & 0xFFFF) as u32;
+                match event {
+                    WM_RBUTTONUP => {
+                        show_context_menu(hwnd);
+                    }
+                    WM_LBUTTONDBLCLK => {
+                        // Double-click could trigger capture or show status
+                        log("Tray icon double-clicked");
+                    }
+                    _ => {}
+                }
+                LRESULT(0)
+            }
+            WM_COMMAND => {
+                let cmd = wparam.0 & 0xFFFF;
+                if cmd == MENU_EXIT {
+                    log("Exit requested");
+                    PostQuitMessage(0);
+                }
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+}
+
+fn add_tray_icon(hwnd: HWND) -> Result<()> {
+    unsafe {
+        let mut nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+            uCallbackMessage: WM_TRAYICON,
+            hIcon: LoadIconW(None, IDI_APPLICATION)?,
+            ..Default::default()
+        };
+
+        // Set tooltip
+        let tip = "Gakumas Screenshot (Ctrl+Shift+S)";
+        let tip_wide: Vec<u16> = tip.encode_utf16().chain(std::iter::once(0)).collect();
+        let len = tip_wide.len().min(nid.szTip.len());
+        nid.szTip[..len].copy_from_slice(&tip_wide[..len]);
+
+        if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
+            return Err(anyhow!("Failed to add tray icon"));
+        }
+
+        Ok(())
+    }
+}
+
+fn remove_tray_icon(hwnd: HWND) {
+    unsafe {
+        let nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            ..Default::default()
+        };
+        let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+    }
+}
+
+fn show_context_menu(hwnd: HWND) {
+    unsafe {
+        let menu = CreatePopupMenu().unwrap();
+
+        let exit_text = w!("Exit");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_EXIT, exit_text);
+
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+
+        // Required for the menu to work properly
+        let _ = SetForegroundWindow(hwnd);
+
+        let _ = TrackPopupMenu(
+            menu,
+            TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+            pt.x,
+            pt.y,
+            0,
+            hwnd,
+            None,
+        );
+
+        let _ = DestroyMenu(menu);
+    }
 }
 
 fn capture_gakumas() -> Result<PathBuf> {
@@ -321,10 +487,14 @@ fn find_gakumas_window() -> Result<HWND> {
             }
 
             // Open the process to get its name
-            let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id);
+            let process_handle =
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id);
             let Ok(process_handle) = process_handle else {
                 if data.debug {
-                    log(&format!("  [{}] \"{}\" - failed to open process", process_id, title));
+                    log(&format!(
+                        "  [{}] \"{}\" - failed to open process",
+                        process_id, title
+                    ));
                 }
                 return TRUE;
             };
@@ -332,12 +502,20 @@ fn find_gakumas_window() -> Result<HWND> {
             // Get process executable name
             let mut name_buf: Vec<u16> = vec![0; 1024];
             let mut len = name_buf.len() as u32;
-            let result = QueryFullProcessImageNameW(process_handle, PROCESS_NAME_WIN32, windows::core::PWSTR(name_buf.as_mut_ptr()), &mut len);
+            let result = QueryFullProcessImageNameW(
+                process_handle,
+                PROCESS_NAME_WIN32,
+                windows::core::PWSTR(name_buf.as_mut_ptr()),
+                &mut len,
+            );
             let _ = windows::Win32::Foundation::CloseHandle(process_handle);
 
             if result.is_err() || len == 0 {
                 if data.debug {
-                    log(&format!("  [{}] \"{}\" - failed to get process name", process_id, title));
+                    log(&format!(
+                        "  [{}] \"{}\" - failed to get process name",
+                        process_id, title
+                    ));
                 }
                 return TRUE;
             }
@@ -354,7 +532,10 @@ fn find_gakumas_window() -> Result<HWND> {
             let process_name_lower = process_name.to_lowercase();
 
             if data.debug {
-                log(&format!("  [{}] {} - \"{}\"", process_id, process_name, title));
+                log(&format!(
+                    "  [{}] {} - \"{}\"",
+                    process_id, process_name, title
+                ));
             }
 
             // Check if this is gakumas.exe
@@ -370,7 +551,11 @@ fn find_gakumas_window() -> Result<HWND> {
 
     log("Searching for gakumas.exe window...");
     log("Listing visible windows:");
-    let mut data = EnumData { hwnd: None, process_name: None, debug: true };
+    let mut data = EnumData {
+        hwnd: None,
+        process_name: None,
+        debug: true,
+    };
     unsafe {
         // Don't use ? here - EnumWindows returns FALSE when callback stops it early,
         // which is expected behavior, not an error

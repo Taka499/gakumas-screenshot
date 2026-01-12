@@ -28,8 +28,12 @@ use windows::Win32::System::Threading::{
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+    RegisterHotKey, SendInput, UnregisterHotKey, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE,
+    MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEINPUT, MOD_CONTROL,
+    MOD_NOREPEAT, MOD_SHIFT,
 };
+use windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics;
+use windows::Win32::UI::WindowsAndMessaging::{SM_CXSCREEN, SM_CYSCREEN};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
@@ -37,14 +41,16 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
     EnumWindows, GetClientRect, GetCursorPos, GetMessageW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, InsertMenuW, IsWindowVisible, LoadIconW,
-    PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDI_APPLICATION, MF_BYPOSITION, MF_STRING, MSG,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
-    WM_LBUTTONDBLCLK, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
+    TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDI_APPLICATION, MF_BYPOSITION,
+    MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY,
+    WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, WM_MOUSEMOVE, WM_RBUTTONUP,
+    WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 
 const HOTKEY_ID: i32 = 1;
-const TARGET_PROCESS: &str = "gakumas";
+const HOTKEY_CLICK_TEST: i32 = 2;
+const HOTKEY_SENDINPUT_TEST: i32 = 3;
 const WM_TRAYICON: u32 = WM_USER + 1;
 const MENU_EXIT: usize = 1001;
 
@@ -77,7 +83,7 @@ fn main() -> Result<()> {
     // Add system tray icon
     add_tray_icon(hwnd)?;
 
-    // Register global hotkey: Ctrl+Shift+S
+    // Register global hotkey: Ctrl+Shift+S for screenshot
     unsafe {
         RegisterHotKey(
             hwnd,
@@ -87,8 +93,30 @@ fn main() -> Result<()> {
         )?;
     }
 
+    // Register global hotkey: Ctrl+Shift+F9 for PostMessage click test
+    unsafe {
+        RegisterHotKey(
+            hwnd,
+            HOTKEY_CLICK_TEST,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            0x78, // VK_F9
+        )?;
+    }
+
+    // Register global hotkey: Ctrl+Shift+F10 for SendInput click test
+    unsafe {
+        RegisterHotKey(
+            hwnd,
+            HOTKEY_SENDINPUT_TEST,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            0x79, // VK_F10
+        )?;
+    }
+
     log("Gakumas Screenshot Tool started");
-    log("Hotkey: Ctrl+Shift+S");
+    log("Hotkey: Ctrl+Shift+S (screenshot)");
+    log("Hotkey: Ctrl+Shift+F9 (PostMessage click test)");
+    log("Hotkey: Ctrl+Shift+F10 (SendInput click test - MOVES CURSOR)");
     log("Right-click tray icon to exit");
 
     // Message loop
@@ -101,6 +129,8 @@ fn main() -> Result<()> {
 
         // Cleanup
         let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_CLICK_TEST);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_SENDINPUT_TEST);
         remove_tray_icon(hwnd);
         let _ = DestroyWindow(hwnd);
     }
@@ -159,6 +189,18 @@ unsafe extern "system" fn window_proc(
                     match capture_gakumas() {
                         Ok(path) => log(&format!("Screenshot saved: {}", path.display())),
                         Err(e) => log(&format!("Capture failed: {}", e)),
+                    }
+                } else if wparam.0 as i32 == HOTKEY_CLICK_TEST {
+                    log("PostMessage click test hotkey pressed!");
+                    match test_postmessage_click() {
+                        Ok(()) => log("PostMessage click test completed"),
+                        Err(e) => log(&format!("PostMessage click test failed: {}", e)),
+                    }
+                } else if wparam.0 as i32 == HOTKEY_SENDINPUT_TEST {
+                    log("SendInput click test hotkey pressed!");
+                    match test_sendinput_click() {
+                        Ok(()) => log("SendInput click test completed"),
+                        Err(e) => log(&format!("SendInput click test failed: {}", e)),
                     }
                 }
                 LRESULT(0)
@@ -538,8 +580,8 @@ fn find_gakumas_window() -> Result<HWND> {
                 ));
             }
 
-            // Check if this is gakumas.exe
-            if process_name_lower.contains(TARGET_PROCESS) {
+            // Check if this is exactly gakumas.exe (not gakumas-screenshot.exe, etc.)
+            if process_name_lower == "gakumas.exe" {
                 data.hwnd = Some(hwnd);
                 data.process_name = Some(process_name);
                 return BOOL(0); // Stop enumeration
@@ -642,4 +684,176 @@ fn create_capture_item(hwnd: HWND) -> Result<GraphicsCaptureItem> {
             .CreateForWindow(hwnd)
             .context("Failed to create capture item for window")
     }
+}
+
+/// Test if PostMessage-based clicking works with the game.
+/// This sends WM_LBUTTONDOWN/UP to the center of the game's client area.
+fn test_postmessage_click() -> Result<()> {
+    log("Testing PostMessage click...");
+
+    let hwnd = find_gakumas_window()?;
+    log(&format!("Found window: {:?}", hwnd));
+
+    // Get client area size
+    let mut client_rect = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut client_rect)? };
+
+    let client_width = client_rect.right - client_rect.left;
+    let client_height = client_rect.bottom - client_rect.top;
+
+    // Click at center of client area
+    let click_x = client_width / 2;
+    let click_y = client_height / 2;
+
+    log(&format!(
+        "Client area: {}x{}, clicking at ({}, {})",
+        client_width, client_height, click_x, click_y
+    ));
+
+    // Pack coordinates into LPARAM: low word = x, high word = y
+    let lparam = LPARAM(((click_y as u32) << 16 | (click_x as u32)) as isize);
+
+    // WPARAM for mouse buttons: MK_LBUTTON = 0x0001
+    let wparam_down = WPARAM(0x0001); // MK_LBUTTON
+    let wparam_up = WPARAM(0);
+
+    unsafe {
+        // First, send mouse move to position (some apps need this)
+        log("Sending WM_MOUSEMOVE...");
+        let move_result = PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam);
+        log(&format!("WM_MOUSEMOVE result: {:?}", move_result));
+
+        // Small delay
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Send mouse down
+        log("Sending WM_LBUTTONDOWN...");
+        let down_result = PostMessageW(hwnd, WM_LBUTTONDOWN, wparam_down, lparam);
+        log(&format!("WM_LBUTTONDOWN result: {:?}", down_result));
+
+        // Small delay between down and up
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Send mouse up
+        log("Sending WM_LBUTTONUP...");
+        let up_result = PostMessageW(hwnd, WM_LBUTTONUP, wparam_up, lparam);
+        log(&format!("WM_LBUTTONUP result: {:?}", up_result));
+    }
+
+    log("PostMessage click sequence completed");
+    Ok(())
+}
+
+/// Test if SendInput-based clicking works with the game.
+/// WARNING: This WILL move your actual cursor to the game window center.
+fn test_sendinput_click() -> Result<()> {
+    log("Testing SendInput click...");
+
+    let hwnd = find_gakumas_window()?;
+    log(&format!("Found window: {:?}", hwnd));
+
+    // Bring window to foreground
+    log("Bringing window to foreground...");
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    // Give window time to activate
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Get client area size
+    let mut client_rect = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut client_rect)? };
+
+    let client_width = client_rect.right - client_rect.left;
+    let client_height = client_rect.bottom - client_rect.top;
+
+    // Click at center of client area (in client coordinates)
+    let click_x = client_width / 2;
+    let click_y = client_height / 2;
+
+    // Convert client coordinates to screen coordinates
+    let mut screen_point = POINT {
+        x: click_x,
+        y: click_y,
+    };
+    unsafe {
+        if !ClientToScreen(hwnd, &mut screen_point).as_bool() {
+            return Err(anyhow!("ClientToScreen failed"));
+        }
+    }
+
+    log(&format!(
+        "Client area: {}x{}, clicking at client ({}, {}) = screen ({}, {})",
+        client_width, client_height, click_x, click_y, screen_point.x, screen_point.y
+    ));
+
+    // Get screen dimensions for normalization
+    let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+
+    // Normalize to 0-65535 range (required by MOUSEEVENTF_ABSOLUTE)
+    let norm_x = ((screen_point.x as i64 * 65535) / screen_width as i64) as i32;
+    let norm_y = ((screen_point.y as i64 * 65535) / screen_height as i64) as i32;
+
+    log(&format!(
+        "Screen: {}x{}, normalized coords: ({}, {})",
+        screen_width, screen_height, norm_x, norm_y
+    ));
+
+    unsafe {
+        // Move + click in one sequence with absolute coordinates on each event
+        log("Sending mouse move...");
+        let move_input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: norm_x,
+                    dy: norm_y,
+                    dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                    ..Default::default()
+                },
+            },
+        };
+        let move_result = SendInput(&[move_input], std::mem::size_of::<INPUT>() as i32);
+        log(&format!("Mouse move result: {} inputs sent", move_result));
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Mouse down with absolute position
+        log("Sending mouse down at absolute position...");
+        let down_input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: norm_x,
+                    dy: norm_y,
+                    dwFlags: MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
+                    ..Default::default()
+                },
+            },
+        };
+        let down_result = SendInput(&[down_input], std::mem::size_of::<INPUT>() as i32);
+        log(&format!("Mouse down result: {} inputs sent", down_result));
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Mouse up with absolute position
+        log("Sending mouse up at absolute position...");
+        let up_input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: norm_x,
+                    dy: norm_y,
+                    dwFlags: MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
+                    ..Default::default()
+                },
+            },
+        };
+        let up_result = SendInput(&[up_input], std::mem::size_of::<INPUT>() as i32);
+        log(&format!("Mouse up result: {} inputs sent", up_result));
+    }
+
+    log("SendInput click sequence completed");
+    Ok(())
 }

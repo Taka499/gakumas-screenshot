@@ -26,10 +26,12 @@ Single-file Rust application (`src/main.rs`) with these key components:
 - **GPU Pipeline**: D3D11 device creates staging texture, copies captured frame, maps for CPU read
 - **Image Processing**: Crops to client area (excludes title bar/borders), converts BGRA→RGBA, saves as PNG
 
-## Key Constants
+## Key Constants and Hotkeys
 
-- `TARGET_PROCESS`: "gakumas" - substring match against process executable name
-- `HOTKEY_ID`: Ctrl+Shift+S (0x53)
+- Process matching: exact match `"gakumas.exe"` (case-insensitive)
+- `HOTKEY_ID` (1): Ctrl+Shift+S - Screenshot
+- `HOTKEY_CLICK_TEST` (2): Ctrl+Shift+F9 - PostMessage click test
+- `HOTKEY_SENDINPUT_TEST` (3): Ctrl+Shift+F10 - SendInput click test
 - Output: `gakumas_YYYYMMDD_HHMMSS.png` in current directory
 - Log: `gakumas_screenshot.log` in current directory
 
@@ -38,3 +40,12 @@ Single-file Rust application (`src/main.rs`) with these key components:
 - Uses Rust 2024 edition requiring explicit `unsafe` blocks inside `unsafe fn`
 - `EnumWindows` returns FALSE when callback stops early - don't treat as error
 - `windows` crate v0.58 feature flags must match APIs used (see Cargo.toml)
+- `SendInput` with `SetForegroundWindow` is required for game input (PostMessage is ignored)
+- Must run as Administrator if game runs elevated (UIPI restriction)
+
+## Roadmap
+
+See `docs/ROADMAP_AUTOMATION.md` for the full automation feature roadmap including:
+- UI automation (clicking buttons)
+- OCR integration (Tesseract)
+- Statistics and visualization

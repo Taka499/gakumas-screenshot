@@ -74,14 +74,24 @@ The project currently provides a **manual screenshot tool**:
 
 ### 2.2 Source Code Structure
 
-The entire application is contained in a single file:
+The application is organized into modules:
 
 ```
 gakumas-screenshot/
 ├── src/
-│   └── main.rs          # All application code (~650 lines)
-├── Cargo.toml           # Dependencies and build config
-├── CLAUDE.md            # Development guidance
+│   ├── main.rs              # Application shell, tray, message loop (~284 lines)
+│   ├── capture/
+│   │   ├── mod.rs           # Module exports
+│   │   ├── window.rs        # Window discovery (find_gakumas_window)
+│   │   └── screenshot.rs    # WGC capture pipeline
+│   └── automation/
+│       ├── mod.rs           # Module exports
+│       └── input.rs         # Mouse input simulation
+├── build.rs                 # Embeds Windows manifest
+├── gakumas-screenshot.manifest  # UAC elevation (requireAdministrator)
+├── gakumas-screenshot.rc    # Resource file for manifest
+├── Cargo.toml               # Dependencies and build config
+├── CLAUDE.md                # Development guidance
 └── docs/
     └── ROADMAP_AUTOMATION.md  # This document
 ```
@@ -1790,7 +1800,7 @@ gakumas-screenshot/
 |-------|------------|
 | EnumWindows returns FALSE on early stop | Don't use `?` operator; FALSE is expected when stopping enumeration |
 | Tesseract slow on first call | Pre-initialize Tesseract at startup |
-| SendInput blocked by UAC | Run both application and game at same privilege level (both as admin, or both as user) |
+| SendInput blocked by UAC | Application now requires admin by default via embedded manifest |
 | Japanese characters in paths | Use wide string APIs (W suffix) consistently |
 | PostMessage returns "Access is denied" | UIPI blocking - run at same privilege level as target |
 | Game ignores PostMessage clicks | Game requires foreground focus; use SendInput with SetForegroundWindow instead |
@@ -1804,3 +1814,4 @@ gakumas-screenshot/
 |---------|------|---------|
 | 1.0 | 2026-01-12 | Initial roadmap document |
 | 1.1 | 2026-01-13 | Added experimental findings for mouse input methods |
+| 1.2 | 2026-01-13 | Refactored into modules; added admin manifest for UAC elevation |

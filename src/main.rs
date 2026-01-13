@@ -32,6 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const HOTKEY_ID: i32 = 1;
 const HOTKEY_CLICK_TEST: i32 = 2;
 const HOTKEY_SENDINPUT_TEST: i32 = 3;
+const HOTKEY_RELATIVE_CLICK: i32 = 4;
+const HOTKEY_BRIGHTNESS_TEST: i32 = 5;
 const WM_TRAYICON: u32 = WM_USER + 1;
 const MENU_EXIT: usize = 1001;
 
@@ -57,6 +59,9 @@ fn main() -> Result<()> {
             windows::Win32::System::WinRT::RO_INIT_MULTITHREADED,
         )?
     };
+
+    // Load configuration
+    automation::init_config();
 
     // Create hidden window for message handling
     let hwnd = create_message_window()?;
@@ -95,10 +100,32 @@ fn main() -> Result<()> {
         )?;
     }
 
+    // Register global hotkey: Ctrl+Shift+F12 for relative click test
+    unsafe {
+        RegisterHotKey(
+            hwnd,
+            HOTKEY_RELATIVE_CLICK,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            0x7B, // VK_F12
+        )?;
+    }
+
+    // Register global hotkey: Ctrl+Shift+F11 for brightness test
+    unsafe {
+        RegisterHotKey(
+            hwnd,
+            HOTKEY_BRIGHTNESS_TEST,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            0x7A, // VK_F11
+        )?;
+    }
+
     log("Gakumas Screenshot Tool started");
     log("Hotkey: Ctrl+Shift+S (screenshot)");
     log("Hotkey: Ctrl+Shift+F9 (PostMessage click test)");
     log("Hotkey: Ctrl+Shift+F10 (SendInput click test - MOVES CURSOR)");
+    log("Hotkey: Ctrl+Shift+F11 (brightness test)");
+    log("Hotkey: Ctrl+Shift+F12 (relative click test - MOVES CURSOR)");
     log("Right-click tray icon to exit");
 
     // Message loop
@@ -113,6 +140,8 @@ fn main() -> Result<()> {
         let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
         let _ = UnregisterHotKey(hwnd, HOTKEY_CLICK_TEST);
         let _ = UnregisterHotKey(hwnd, HOTKEY_SENDINPUT_TEST);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_RELATIVE_CLICK);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_BRIGHTNESS_TEST);
         remove_tray_icon(hwnd);
         let _ = DestroyWindow(hwnd);
     }
@@ -183,6 +212,43 @@ unsafe extern "system" fn window_proc(
                     match automation::test_sendinput_click() {
                         Ok(()) => log("SendInput click test completed"),
                         Err(e) => log(&format!("SendInput click test failed: {}", e)),
+                    }
+                } else if wparam.0 as i32 == HOTKEY_RELATIVE_CLICK {
+                    log("Relative click test hotkey pressed!");
+                    let config = automation::get_config();
+                    match capture::find_gakumas_window() {
+                        Ok(game_hwnd) => {
+                            let pos = &config.test_click_position;
+                            match automation::click_at_relative(game_hwnd, pos.x, pos.y) {
+                                Ok(()) => log("Relative click test completed"),
+                                Err(e) => log(&format!("Relative click test failed: {}", e)),
+                            }
+                        }
+                        Err(e) => log(&format!("Could not find game window: {}", e)),
+                    }
+                } else if wparam.0 as i32 == HOTKEY_BRIGHTNESS_TEST {
+                    log("Brightness test hotkey pressed!");
+                    let config = automation::get_config();
+                    match capture::find_gakumas_window() {
+                        Ok(game_hwnd) => {
+                            log("Capturing region for brightness test...");
+                            match automation::measure_region_brightness(game_hwnd, config) {
+                                Ok(brightness) => {
+                                    log(&format!("Region brightness: {:.2}", brightness));
+                                    log(&format!(
+                                        "Threshold is {:.2} (current {} threshold)",
+                                        config.brightness_threshold,
+                                        if brightness > config.brightness_threshold {
+                                            "EXCEEDS"
+                                        } else {
+                                            "BELOW"
+                                        }
+                                    ));
+                                }
+                                Err(e) => log(&format!("Brightness test failed: {}", e)),
+                            }
+                        }
+                        Err(e) => log(&format!("Could not find game window: {}", e)),
                     }
                 }
                 LRESULT(0)

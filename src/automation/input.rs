@@ -7,7 +7,7 @@
 
 use anyhow::{anyhow, Result};
 
-use windows::Win32::Foundation::{LPARAM, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
@@ -198,4 +198,114 @@ pub fn test_sendinput_click() -> Result<()> {
 
     crate::log("SendInput click sequence completed");
     Ok(())
+}
+
+/// Clicks at a position specified in client coordinates.
+///
+/// This is an internal helper that:
+/// 1. Brings the window to foreground
+/// 2. Converts client coordinates to screen coordinates
+/// 3. Sends the click via SendInput
+fn click_at_client(hwnd: HWND, client_x: i32, client_y: i32) -> Result<()> {
+    // Bring window to foreground
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Convert client coordinates to screen coordinates
+    let mut screen_point = POINT {
+        x: client_x,
+        y: client_y,
+    };
+    unsafe {
+        if !ClientToScreen(hwnd, &mut screen_point).as_bool() {
+            return Err(anyhow!("ClientToScreen failed"));
+        }
+    }
+
+    // Get screen dimensions for normalization
+    let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+
+    // Normalize to 0-65535 range (required by MOUSEEVENTF_ABSOLUTE)
+    let norm_x = ((screen_point.x as i64 * 65535) / screen_width as i64) as i32;
+    let norm_y = ((screen_point.y as i64 * 65535) / screen_height as i64) as i32;
+
+    unsafe {
+        // Move to position
+        let move_input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: norm_x,
+                    dy: norm_y,
+                    dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                    ..Default::default()
+                },
+            },
+        };
+        SendInput(&[move_input], std::mem::size_of::<INPUT>() as i32);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Mouse down
+        let down_input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: norm_x,
+                    dy: norm_y,
+                    dwFlags: MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
+                    ..Default::default()
+                },
+            },
+        };
+        SendInput(&[down_input], std::mem::size_of::<INPUT>() as i32);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Mouse up
+        let up_input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: norm_x,
+                    dy: norm_y,
+                    dwFlags: MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE,
+                    ..Default::default()
+                },
+            },
+        };
+        SendInput(&[up_input], std::mem::size_of::<INPUT>() as i32);
+    }
+
+    Ok(())
+}
+
+/// Clicks at a position specified in relative coordinates (0.0 to 1.0).
+///
+/// Relative coordinates are converted to client area pixel coordinates:
+/// - rel_x: 0.0 = left edge, 1.0 = right edge
+/// - rel_y: 0.0 = top edge, 1.0 = bottom edge
+///
+/// WARNING: This WILL move your actual cursor to the target position.
+pub fn click_at_relative(hwnd: HWND, rel_x: f32, rel_y: f32) -> Result<()> {
+    // Get client area size
+    let mut client_rect = RECT::default();
+    unsafe { GetClientRect(hwnd, &mut client_rect)? };
+
+    let client_width = client_rect.right - client_rect.left;
+    let client_height = client_rect.bottom - client_rect.top;
+
+    // Convert relative to client coordinates
+    let client_x = (rel_x * client_width as f32) as i32;
+    let client_y = (rel_y * client_height as f32) as i32;
+
+    crate::log(&format!(
+        "Clicking at relative ({:.3}, {:.3}) = client ({}, {}) in {}x{} window",
+        rel_x, rel_y, client_x, client_y, client_width, client_height
+    ));
+
+    click_at_client(hwnd, client_x, client_y)
 }

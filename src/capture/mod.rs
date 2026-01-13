@@ -4,12 +4,13 @@
 //! - Window discovery (`find_gakumas_window`)
 //! - Client area information (`get_client_area_info`)
 //! - Screenshot capture (`capture_gakumas`)
+//! - Region capture (`capture_region`)
 
+pub mod region;
 pub mod screenshot;
 pub mod window;
 
+pub use region::capture_region;
 pub use screenshot::capture_gakumas;
 pub use window::find_gakumas_window;
-// Re-exported for future use by automation and other modules
-#[allow(unused_imports)]
 pub use window::get_client_area_info;

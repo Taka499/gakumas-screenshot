@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.0 |
+| Version | 1.3 |
 | Created | 2026-01-12 |
-| Status | Planning |
+| Status | Phase 1 Complete |
 | Target | Complete automation of rehearsal → screenshot → OCR → statistics pipeline |
 
 ---
@@ -79,20 +79,26 @@ The application is organized into modules:
 ```
 gakumas-screenshot/
 ├── src/
-│   ├── main.rs              # Application shell, tray, message loop (~284 lines)
+│   ├── main.rs              # Application shell, tray, message loop
 │   ├── capture/
 │   │   ├── mod.rs           # Module exports
 │   │   ├── window.rs        # Window discovery (find_gakumas_window)
-│   │   └── screenshot.rs    # WGC capture pipeline
+│   │   ├── screenshot.rs    # WGC capture pipeline (full window)
+│   │   └── region.rs        # Region capture (partial window)
 │   └── automation/
 │       ├── mod.rs           # Module exports
-│       └── input.rs         # Mouse input simulation
+│       ├── input.rs         # Mouse input simulation (click_at_relative)
+│       ├── config.rs        # Configuration loading (config.json)
+│       └── detection.rs     # Loading state detection (brightness)
+├── config.json              # Automation configuration (button positions, thresholds)
 ├── build.rs                 # Embeds Windows manifest
 ├── gakumas-screenshot.manifest  # UAC elevation (requireAdministrator)
 ├── gakumas-screenshot.rc    # Resource file for manifest
 ├── Cargo.toml               # Dependencies and build config
 ├── CLAUDE.md                # Development guidance
 └── docs/
+    ├── PLANS.md             # ExecPlan authoring guidelines
+    ├── EXECPLAN_PHASE1_REMAINING.md  # Phase 1 implementation plan
     └── ROADMAP_AUTOMATION.md  # This document
 ```
 
@@ -1805,6 +1811,8 @@ gakumas-screenshot/
 | PostMessage returns "Access is denied" | UIPI blocking - run at same privilege level as target |
 | Game ignores PostMessage clicks | Game requires foreground focus; use SendInput with SetForegroundWindow instead |
 | Process name substring match | Use exact match (`== "gakumas.exe"`) to avoid matching `gakumas-screenshot.exe` |
+| Config not loading | Config is loaded from exe directory, not CWD; copy config.json next to the exe |
+| Brightness unreliable for State 1→2 | Use OCR to detect "スキップ" text appearing; brightness only for State 2→3 |
 
 ---
 
@@ -1815,3 +1823,4 @@ gakumas-screenshot/
 | 1.0 | 2026-01-12 | Initial roadmap document |
 | 1.1 | 2026-01-13 | Added experimental findings for mouse input methods |
 | 1.2 | 2026-01-13 | Refactored into modules; added admin manifest for UAC elevation |
+| 1.3 | 2026-01-13 | Phase 1 complete: config system, relative coords, region capture, brightness detection |

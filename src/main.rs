@@ -4,6 +4,7 @@
 //! gakumas.exe game window using the Windows Graphics Capture API.
 
 mod automation;
+mod calibration;
 mod capture;
 
 use anyhow::{anyhow, Result};
@@ -24,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
     GetCursorPos, GetMessageW, InsertMenuW, LoadIconW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, TrackPopupMenu, TranslateMessage, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    IDI_APPLICATION, MF_BYPOSITION, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    IDI_APPLICATION, MF_BYPOSITION, MF_SEPARATOR, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_RIGHTBUTTON, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_RBUTTONUP, WM_USER,
     WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
@@ -35,7 +36,11 @@ const HOTKEY_SENDINPUT_TEST: i32 = 3;
 const HOTKEY_RELATIVE_CLICK: i32 = 4;
 const HOTKEY_BRIGHTNESS_TEST: i32 = 5;
 const WM_TRAYICON: u32 = WM_USER + 1;
-const MENU_EXIT: usize = 1001;
+
+// Menu item IDs
+const MENU_CALIBRATE: usize = 1001;
+const MENU_PREVIEW: usize = 1002;
+const MENU_EXIT: usize = 1003;
 
 /// Logs a message to both console and log file with timestamp.
 pub fn log(msg: &str) {
@@ -63,6 +68,12 @@ fn main() -> Result<()> {
     // Load configuration
     automation::init_config();
 
+    // Run as system tray application
+    run_tray_app()
+}
+
+/// Runs the main system tray application with hotkey handling.
+fn run_tray_app() -> Result<()> {
     // Create hidden window for message handling
     let hwnd = create_message_window()?;
     unsafe { MAIN_HWND = hwnd };
@@ -195,25 +206,38 @@ unsafe extern "system" fn window_proc(
     unsafe {
         match msg {
             WM_HOTKEY => {
-                if wparam.0 as i32 == HOTKEY_ID {
+                let hotkey_id = wparam.0 as i32;
+
+                // Check if this is a calibration hotkey
+                if hotkey_id >= calibration::HOTKEY_CAL_F1
+                    && hotkey_id <= calibration::HOTKEY_CAL_ENTER
+                {
+                    if let Err(e) = calibration::handle_calibration_hotkey(hotkey_id) {
+                        log(&format!("Calibration error: {}", e));
+                    }
+                    return LRESULT(0);
+                }
+
+                // Normal hotkeys
+                if hotkey_id == HOTKEY_ID {
                     log("Hotkey pressed! Capturing...");
                     match capture::capture_gakumas() {
                         Ok(path) => log(&format!("Screenshot saved: {}", path.display())),
                         Err(e) => log(&format!("Capture failed: {}", e)),
                     }
-                } else if wparam.0 as i32 == HOTKEY_CLICK_TEST {
+                } else if hotkey_id == HOTKEY_CLICK_TEST {
                     log("PostMessage click test hotkey pressed!");
                     match automation::test_postmessage_click() {
                         Ok(()) => log("PostMessage click test completed"),
                         Err(e) => log(&format!("PostMessage click test failed: {}", e)),
                     }
-                } else if wparam.0 as i32 == HOTKEY_SENDINPUT_TEST {
+                } else if hotkey_id == HOTKEY_SENDINPUT_TEST {
                     log("SendInput click test hotkey pressed!");
                     match automation::test_sendinput_click() {
                         Ok(()) => log("SendInput click test completed"),
                         Err(e) => log(&format!("SendInput click test failed: {}", e)),
                     }
-                } else if wparam.0 as i32 == HOTKEY_RELATIVE_CLICK {
+                } else if hotkey_id == HOTKEY_RELATIVE_CLICK {
                     log("Relative click test hotkey pressed!");
                     let config = automation::get_config();
                     match capture::find_gakumas_window() {
@@ -226,7 +250,7 @@ unsafe extern "system" fn window_proc(
                         }
                         Err(e) => log(&format!("Could not find game window: {}", e)),
                     }
-                } else if wparam.0 as i32 == HOTKEY_BRIGHTNESS_TEST {
+                } else if hotkey_id == HOTKEY_BRIGHTNESS_TEST {
                     log("Brightness test hotkey pressed!");
                     let config = automation::get_config();
                     match capture::find_gakumas_window() {
@@ -269,7 +293,17 @@ unsafe extern "system" fn window_proc(
             }
             WM_COMMAND => {
                 let cmd = wparam.0 & 0xFFFF;
-                if cmd == MENU_EXIT {
+                if cmd == MENU_CALIBRATE {
+                    log("Calibration requested");
+                    if let Err(e) = calibration::start_calibration(hwnd) {
+                        log(&format!("Failed to start calibration: {}", e));
+                    }
+                } else if cmd == MENU_PREVIEW {
+                    log("Preview requested");
+                    if let Err(e) = calibration::show_preview_once() {
+                        log(&format!("Failed to show preview: {}", e));
+                    }
+                } else if cmd == MENU_EXIT {
                     log("Exit requested");
                     PostQuitMessage(0);
                 }
@@ -326,8 +360,18 @@ fn show_context_menu(hwnd: HWND) {
     unsafe {
         let menu = CreatePopupMenu().unwrap();
 
+        // Add menu items (inserted in reverse order since position 0)
         let exit_text = w!("Exit");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_EXIT, exit_text);
+
+        // Separator
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_SEPARATOR, 0, None);
+
+        let preview_text = w!("Preview Regions");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_PREVIEW, preview_text);
+
+        let calibrate_text = w!("Calibrate Regions...");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CALIBRATE, calibrate_text);
 
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);

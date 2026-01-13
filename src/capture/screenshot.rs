@@ -262,6 +262,162 @@ fn create_direct3d_device(
         .context("Failed to cast to IDirect3DDevice")
 }
 
+/// Captures a screenshot of the specified game window and returns it as an ImageBuffer.
+///
+/// This is similar to `capture_gakumas` but:
+/// - Takes an HWND parameter instead of finding the window
+/// - Returns the image data instead of saving to file
+/// - Does not log as verbosely
+pub fn capture_gakumas_to_buffer(hwnd: HWND) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
+    let (client_rect, client_offset) = get_client_area_info(hwnd)?;
+    let client_width = client_rect.right - client_rect.left;
+    let client_height = client_rect.bottom - client_rect.top;
+
+    // Create D3D11 device
+    let (device, context) = create_d3d11_device()?;
+
+    // Create capture item from window
+    let item = create_capture_item(hwnd)?;
+    let size = item.Size()?;
+
+    // Create frame pool
+    let d3d_device = create_direct3d_device(&device)?;
+    let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+        &d3d_device,
+        DirectXPixelFormat::B8G8R8A8UIntNormalized,
+        1,
+        size,
+    )?;
+
+    // Create capture session
+    let session = frame_pool.CreateCaptureSession(&item)?;
+
+    // Set up frame arrival handling
+    let frame_arrived = Arc::new(AtomicBool::new(false));
+    let frame_arrived_clone = frame_arrived.clone();
+
+    frame_pool.FrameArrived(&TypedEventHandler::new(
+        move |_pool: &Option<Direct3D11CaptureFramePool>, _| {
+            frame_arrived_clone.store(true, Ordering::SeqCst);
+            Ok(())
+        },
+    ))?;
+
+    // Start capture
+    session.StartCapture()?;
+
+    // Wait for frame
+    let start = std::time::Instant::now();
+    while !frame_arrived.load(Ordering::SeqCst) {
+        if start.elapsed().as_secs() > 5 {
+            return Err(anyhow!("Timeout waiting for frame"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // Get the frame
+    let frame = frame_pool.TryGetNextFrame()?;
+    let surface = frame.Surface()?;
+
+    // Get the D3D11 texture from the surface
+    let access: windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess =
+        surface.cast()?;
+    let texture: ID3D11Texture2D = unsafe { access.GetInterface()? };
+
+    // Get texture description
+    let mut desc = D3D11_TEXTURE2D_DESC::default();
+    unsafe { texture.GetDesc(&mut desc) };
+
+    // Create staging texture for CPU read
+    let staging_desc = D3D11_TEXTURE2D_DESC {
+        Width: desc.Width,
+        Height: desc.Height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: desc.Format,
+        SampleDesc: desc.SampleDesc,
+        Usage: D3D11_USAGE_STAGING,
+        BindFlags: Default::default(),
+        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+        MiscFlags: Default::default(),
+    };
+
+    let staging_texture = unsafe {
+        let mut staging: Option<ID3D11Texture2D> = None;
+        device.CreateTexture2D(&staging_desc, None, Some(&mut staging))?;
+        staging.ok_or_else(|| anyhow!("Failed to create staging texture"))?
+    };
+
+    // Copy to staging texture
+    unsafe {
+        context.CopyResource(
+            &staging_texture.cast::<ID3D11Resource>()?,
+            &texture.cast::<ID3D11Resource>()?,
+        );
+    }
+
+    // Map the staging texture
+    let mapped = unsafe {
+        let mut mapped = Default::default();
+        context.Map(
+            &staging_texture.cast::<ID3D11Resource>()?,
+            0,
+            D3D11_MAP_READ,
+            0,
+            Some(&mut mapped),
+        )?;
+        mapped
+    };
+
+    // Calculate crop parameters
+    let crop_x = client_offset.x as u32;
+    let crop_y = client_offset.y as u32;
+    let crop_width = client_width as u32;
+    let crop_height = client_height as u32;
+
+    // Create image from mapped data (cropped to client area)
+    let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(crop_width, crop_height);
+
+    let src_data = unsafe {
+        std::slice::from_raw_parts(
+            mapped.pData as *const u8,
+            (mapped.RowPitch * desc.Height) as usize,
+        )
+    };
+    let row_pitch = mapped.RowPitch as usize;
+
+    for y in 0..crop_height {
+        let src_y = (crop_y + y) as usize;
+        if src_y >= desc.Height as usize {
+            break;
+        }
+        for x in 0..crop_width {
+            let src_x = (crop_x + x) as usize;
+            if src_x >= desc.Width as usize {
+                break;
+            }
+            let offset = src_y * row_pitch + src_x * 4;
+            // BGRA -> RGBA
+            let b = src_data[offset];
+            let g = src_data[offset + 1];
+            let r = src_data[offset + 2];
+            let a = src_data[offset + 3];
+            img.put_pixel(x, y, Rgba([r, g, b, a]));
+        }
+    }
+
+    // Unmap
+    unsafe {
+        context.Unmap(&staging_texture.cast::<ID3D11Resource>()?, 0);
+    }
+
+    // Stop capture
+    session.Close()?;
+    frame_pool.Close()?;
+
+    Ok(img)
+}
+
 /// Creates a GraphicsCaptureItem for the specified window.
 ///
 /// The capture item represents the window that will be captured.

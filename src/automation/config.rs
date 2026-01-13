@@ -13,7 +13,7 @@ static CONFIG: OnceLock<AutomationConfig> = OnceLock::new();
 
 /// A rectangle in relative coordinates (0.0 to 1.0).
 /// Used for defining screen regions that scale with window size.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RelativeRect {
     /// X position of top-left corner (0.0 = left edge, 1.0 = right edge)
     pub x: f32,
@@ -68,6 +68,16 @@ pub struct AutomationConfig {
     pub capture_delay_ms: u64,
     /// Test position for relative click hotkey
     pub test_click_position: ButtonConfig,
+
+    /// Score regions for OCR: [stage][character], 3 stages × 3 characters = 9 regions.
+    /// Optional - only present after running calibration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_regions: Option<[[RelativeRect; 3]; 3]>,
+
+    /// Stage total regions for OCR validation: one per stage.
+    /// Optional - only present after running calibration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_total_regions: Option<[RelativeRect; 3]>,
 }
 
 impl Default for AutomationConfig {
@@ -85,6 +95,8 @@ impl Default for AutomationConfig {
             loading_timeout_ms: 30000,
             capture_delay_ms: 500,
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },
+            score_regions: None,
+            stage_total_regions: None,
         }
     }
 }

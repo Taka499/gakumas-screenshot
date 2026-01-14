@@ -116,11 +116,11 @@ fn default_start_button_region() -> RelativeRect {
 }
 
 fn default_start_button_reference() -> String {
-    "start_button_ref.png".to_string()
+    "assets/start_button_ref.png".to_string()
 }
 
 fn default_skip_button_reference() -> String {
-    "skip_button_ref.png".to_string()
+    "assets/skip_button_ref.png".to_string()
 }
 
 fn default_end_button() -> ButtonConfig {
@@ -139,7 +139,7 @@ fn default_end_button_region() -> RelativeRect {
 }
 
 fn default_end_button_reference() -> String {
-    "end_button_ref.png".to_string()
+    "assets/end_button_ref.png".to_string()
 }
 
 fn default_result_timeout_ms() -> u64 {
@@ -180,10 +180,7 @@ impl Default for AutomationConfig {
 /// Looks for config.json in the same directory as the executable.
 fn load_config() -> AutomationConfig {
     // Try to find config.json next to the executable
-    let config_path = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|p| p.join("config.json")))
-        .unwrap_or_else(|| Path::new("config.json").to_path_buf());
+    let config_path = crate::paths::get_exe_dir().join("config.json");
 
     crate::log(&format!("Looking for config at: {}", config_path.display()));
 

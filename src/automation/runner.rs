@@ -22,9 +22,6 @@ static AUTOMATION_RUNNING: AtomicBool = AtomicBool::new(false);
 /// Default number of iterations if not specified in config.
 const DEFAULT_ITERATIONS: u32 = 10;
 
-/// Default screenshot directory.
-const DEFAULT_SCREENSHOT_DIR: &str = "screenshots";
-
 /// Default CSV file path.
 const DEFAULT_CSV_PATH: &str = "results.csv";
 
@@ -66,14 +63,9 @@ pub fn start_automation(max_iterations: Option<u32>) -> Result<()> {
     let config = get_config().clone();
     let iterations = max_iterations.unwrap_or(DEFAULT_ITERATIONS);
 
-    // Setup paths
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let screenshot_dir = exe_dir.join(DEFAULT_SCREENSHOT_DIR);
-    let csv_path = exe_dir.join(DEFAULT_CSV_PATH);
+    // Setup paths (use centralized paths module)
+    let screenshot_dir = crate::paths::get_screenshots_dir();
+    let csv_path = crate::paths::get_exe_dir().join(DEFAULT_CSV_PATH);
 
     // Create screenshot directory if needed
     if let Err(e) = fs::create_dir_all(&screenshot_dir) {

@@ -216,7 +216,7 @@ pub fn capture_gakumas() -> Result<PathBuf> {
     crate::log("Saving image...");
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let filename = format!("gakumas_{}.png", timestamp);
-    let path = std::env::current_dir()?.join(&filename);
+    let path = crate::paths::get_screenshots_dir().join(&filename);
 
     img.save(&path)?;
     crate::log(&format!("Saved to {}", path.display()));

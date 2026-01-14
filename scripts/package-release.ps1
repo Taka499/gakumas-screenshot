@@ -1,0 +1,82 @@
+# Package release folder for gakumas-screenshot
+# Creates a portable release folder with proper directory structure.
+#
+# Usage: powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
+#        powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1 -OutputDir "dist"
+
+param(
+    [string]$OutputDir = "release"
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== Gakumas Screenshot Release Packager ===" -ForegroundColor Cyan
+Write-Host ""
+
+# Build release
+Write-Host "Building release binary..." -ForegroundColor Yellow
+cargo build --release
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Build failed!" -ForegroundColor Red
+    exit 1
+}
+Write-Host "Build successful." -ForegroundColor Green
+Write-Host ""
+
+# Create output structure
+$releaseDir = Join-Path $OutputDir "gakumas-screenshot"
+Write-Host "Creating release folder: $releaseDir" -ForegroundColor Yellow
+
+if (Test-Path $releaseDir) {
+    Write-Host "Removing existing release folder..." -ForegroundColor Gray
+    Remove-Item -Recurse -Force $releaseDir
+}
+
+# Create directories
+New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $releaseDir "logs") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $releaseDir "screenshots") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $releaseDir "assets") -Force | Out-Null
+
+Write-Host "Created directory structure:" -ForegroundColor Green
+Write-Host "  $releaseDir/"
+Write-Host "  $releaseDir/logs/"
+Write-Host "  $releaseDir/screenshots/"
+Write-Host "  $releaseDir/assets/"
+Write-Host ""
+
+# Copy executable
+$exePath = "target/release/gakumas-screenshot.exe"
+if (-not (Test-Path $exePath)) {
+    Write-Host "Error: Executable not found at $exePath" -ForegroundColor Red
+    exit 1
+}
+Copy-Item $exePath $releaseDir
+Write-Host "Copied gakumas-screenshot.exe" -ForegroundColor Green
+
+# Copy config.json if exists
+if (Test-Path "config.json") {
+    Copy-Item "config.json" $releaseDir
+    Write-Host "Copied config.json" -ForegroundColor Green
+} else {
+    Write-Host "No config.json found (will use defaults)" -ForegroundColor Gray
+}
+
+Write-Host ""
+Write-Host "=== Release Package Complete ===" -ForegroundColor Cyan
+Write-Host "Location: $releaseDir" -ForegroundColor White
+Write-Host ""
+Write-Host "Contents:" -ForegroundColor Yellow
+Get-ChildItem $releaseDir -Recurse | ForEach-Object {
+    $relativePath = $_.FullName.Replace((Resolve-Path $releaseDir).Path, "").TrimStart("\")
+    if ($_.PSIsContainer) {
+        Write-Host "  [DIR]  $relativePath/" -ForegroundColor Blue
+    } else {
+        $size = "{0:N2} MB" -f ($_.Length / 1MB)
+        Write-Host "  [FILE] $relativePath ($size)" -ForegroundColor White
+    }
+}
+
+Write-Host ""
+Write-Host "Note: Tesseract will be extracted automatically on first run." -ForegroundColor Gray
+Write-Host "The embedded Tesseract adds ~30-40 MB to the executable size." -ForegroundColor Gray

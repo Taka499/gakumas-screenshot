@@ -7,6 +7,7 @@ mod automation;
 mod calibration;
 mod capture;
 mod ocr;
+mod paths;
 
 use anyhow::{anyhow, Result};
 use chrono::Local;
@@ -54,10 +55,11 @@ pub fn log(msg: &str) {
     let timestamp = Local::now().format("%H:%M:%S%.3f");
     let line = format!("[{}] {}\n", timestamp, msg);
     print!("{}", line);
+    let log_path = paths::get_logs_dir().join("gakumas_screenshot.log");
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("gakumas_screenshot.log")
+        .open(&log_path)
     {
         let _ = file.write_all(line.as_bytes());
     }
@@ -71,6 +73,15 @@ fn main() -> Result<()> {
             windows::Win32::System::WinRT::RO_INIT_MULTITHREADED,
         )?
     };
+
+    // Ensure output directories exist
+    paths::ensure_directories()?;
+
+    // Ensure Tesseract is available (extracts from embedded zip if needed)
+    if let Err(e) = ocr::ensure_tesseract() {
+        log(&format!("Warning: Failed to setup Tesseract: {}", e));
+        log("OCR features may not work correctly.");
+    }
 
     // Load configuration
     automation::init_config();
@@ -530,12 +541,8 @@ fn capture_start_reference() {
 
     let config = automation::get_config();
 
-    // Determine save path
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let ref_path = exe_dir.join(&config.start_button_reference);
+    // Determine save path (use assets directory)
+    let ref_path = paths::get_assets_dir().join("start_button_ref.png");
 
     // Capture and save
     match automation::save_start_button_reference(game_hwnd, config, &ref_path) {
@@ -566,12 +573,8 @@ fn capture_skip_reference() {
 
     let config = automation::get_config();
 
-    // Determine save path
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let ref_path = exe_dir.join(&config.skip_button_reference);
+    // Determine save path (use assets directory)
+    let ref_path = paths::get_assets_dir().join("skip_button_ref.png");
 
     // Capture and save
     match automation::save_skip_button_reference(game_hwnd, config, &ref_path) {
@@ -602,12 +605,8 @@ fn capture_end_reference() {
 
     let config = automation::get_config();
 
-    // Determine save path
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let ref_path = exe_dir.join(&config.end_button_reference);
+    // Determine save path (use assets directory)
+    let ref_path = paths::get_assets_dir().join("end_button_ref.png");
 
     // Capture and save
     match automation::save_end_button_reference(game_hwnd, config, &ref_path) {

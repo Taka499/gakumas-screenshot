@@ -9,7 +9,7 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 ## Project Overview
 
-Windows screenshot tool that captures the client area of `gakumas.exe` using Windows Graphics Capture API. Runs as a system tray application with global hotkey support.
+Windows screenshot tool that captures the client area of `gakumas.exe` using Windows Graphics Capture API. Runs as a system tray application with global hotkey support. Includes rehearsal automation with embedded Tesseract OCR.
 
 ## COMMIT DISCIPLINE
 - Follow Git-flow workflow to manage the branches
@@ -23,28 +23,41 @@ Windows screenshot tool that captures the client area of `gakumas.exe` using Win
 # Build release (optimized with LTO)
 cargo build --release
 
+# Create release package with proper folder structure
+powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
+
 # Run
 .\target\release\gakumas-screenshot.exe
 ```
 
 ## Architecture
 
-Single-file Rust application (`src/main.rs`) with these key components:
+Multi-module Rust application with these key components:
 
-- **Window Management**: Hidden message window for hotkey/tray events, system tray icon with context menu
-- **Window Discovery**: `EnumWindows` + `QueryFullProcessImageNameW` to find target process by executable name
+- **src/main.rs**: Entry point, system tray, hotkey handling
+- **src/paths.rs**: Centralized path resolution (logs/, screenshots/, assets/, tesseract/)
+- **src/capture/**: Window discovery and screenshot capture via Windows Graphics Capture API
+- **src/automation/**: Rehearsal automation state machine, button detection, OCR worker
+- **src/calibration/**: Interactive calibration wizard for button positions
+- **src/ocr/**: Tesseract integration with embedded extraction
+
+Key technical details:
+- **Window Discovery**: `EnumWindows` + `QueryFullProcessImageNameW` to find target process
 - **Screen Capture**: Windows Graphics Capture (WGC) API via `IGraphicsCaptureItemInterop::CreateForWindow`
 - **GPU Pipeline**: D3D11 device creates staging texture, copies captured frame, maps for CPU read
-- **Image Processing**: Crops to client area (excludes title bar/borders), converts BGRA→RGBA, saves as PNG
+- **Embedded Tesseract**: `include_bytes!` embeds tesseract.zip, extracted on first run to exe directory
 
 ## Key Constants and Hotkeys
 
 - Process matching: exact match `"gakumas.exe"` (case-insensitive)
 - `HOTKEY_ID` (1): Ctrl+Shift+S - Screenshot
+- `HOTKEY_AUTOMATION` (6): Ctrl+Shift+A - Start automation
+- `HOTKEY_ABORT` (7): Ctrl+Shift+Q - Abort automation
 - `HOTKEY_CLICK_TEST` (2): Ctrl+Shift+F9 - PostMessage click test
 - `HOTKEY_SENDINPUT_TEST` (3): Ctrl+Shift+F10 - SendInput click test
-- Output: `gakumas_YYYYMMDD_HHMMSS.png` in current directory
-- Log: `gakumas_screenshot.log` in current directory
+- Output: `screenshots/gakumas_YYYYMMDD_HHMMSS.png`
+- Log: `logs/gakumas_screenshot.log`
+- Reference images: `assets/*.png`
 
 ## Windows API Notes
 
@@ -62,7 +75,7 @@ Single-file Rust application (`src/main.rs`) with these key components:
 
 ## Roadmap
 
-See `docs/ROADMAP_AUTOMATION.md` for the full automation feature roadmap including:
-- UI automation (clicking buttons)
-- OCR integration (Tesseract)
-- Statistics and visualization
+See `docs/ROADMAP_AUTOMATION.md` for the full automation feature roadmap. Current status:
+- UI automation (clicking buttons) - implemented
+- OCR integration (Tesseract) - implemented with embedded Tesseract
+- Statistics and visualization - CSV output implemented

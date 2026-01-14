@@ -553,10 +553,7 @@ fn finish_calibration(items: CalibrationItems, game_hwnd: HWND) -> Result<()> {
     }
 
     // Save config
-    let config_path = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|p| p.join("config.json")))
-        .unwrap_or_else(|| std::path::Path::new("config.json").to_path_buf());
+    let config_path = crate::paths::get_exe_dir().join("config.json");
 
     let json = serde_json::to_string_pretty(&final_config)?;
     std::fs::write(&config_path, &json)?;

@@ -125,11 +125,7 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     let timeout = Duration::from_millis(config.loading_timeout_ms);
 
     // Try to load reference histogram
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let ref_path = exe_dir.join(&config.skip_button_reference);
+    let ref_path = crate::paths::get_exe_dir().join(&config.skip_button_reference);
 
     let reference_histogram = if ref_path.exists() {
         match load_reference_histogram(&ref_path) {
@@ -241,11 +237,7 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     let timeout = Duration::from_millis(config.result_timeout_ms);
 
     // Try to load reference histogram
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let ref_path = exe_dir.join(&config.end_button_reference);
+    let ref_path = crate::paths::get_exe_dir().join(&config.end_button_reference);
 
     let reference_histogram = if ref_path.exists() {
         match load_reference_histogram(&ref_path) {
@@ -328,11 +320,7 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
     let timeout = Duration::from_millis(config.loading_timeout_ms);
 
     // Try to load reference histogram
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let ref_path = exe_dir.join(&config.start_button_reference);
+    let ref_path = crate::paths::get_exe_dir().join(&config.start_button_reference);
 
     let reference_histogram = if ref_path.exists() {
         match load_reference_histogram(&ref_path) {

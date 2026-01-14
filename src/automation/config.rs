@@ -95,12 +95,12 @@ impl Default for AutomationConfig {
     fn default() -> Self {
         Self {
             start_button: ButtonConfig { x: 0.5, y: 0.85 },
-            skip_button: ButtonConfig { x: 0.9, y: 0.95 },
+            skip_button: ButtonConfig { x: 0.82, y: 0.82 },
             skip_button_region: RelativeRect {
-                x: 0.85,
-                y: 0.90,
-                width: 0.10,
-                height: 0.10,
+                x: 0.7,
+                y: 0.8,
+                width: 0.22,
+                height: 0.04,
             },
             // Brightness threshold: Skip button dimmed ~92, enabled ~97
             // Set to 95 to detect when Skip button becomes enabled

@@ -19,17 +19,21 @@ This is inspired by the [gakumas-tools](https://github.com/surisuririsu/gakumas-
 
 ## Progress
 
-- [ ] Milestone 1: Tesseract runtime setup and verification
-- [ ] Milestone 2: Color threshold preprocessing
-- [ ] Milestone 3: Full-image OCR with Tesseract
-- [ ] Milestone 4: Pattern matching and score extraction
-- [ ] Milestone 5: Integration and testing with sample images
-- [ ] Milestone 6: Tray menu integration ("Test OCR" option)
+- [x] Milestone 1: Tesseract runtime setup and verification
+- [x] Milestone 2: Color threshold preprocessing
+- [x] Milestone 3: Full-image OCR with Tesseract
+- [x] Milestone 4: Pattern matching and score extraction
+- [x] Milestone 5: Integration and testing with sample images
+- [x] Milestone 6: Tray menu integration ("Test OCR" option)
+
+**Status: COMPLETE** (2026-01-14)
 
 
 ## Surprises & Discoveries
 
-(None yet)
+- The Rust 2024 edition requires the `embed-resource` crate's Windows manifest to be handled carefully. Tests require elevation due to the admin manifest.
+- Used CLI-based Tesseract approach (via `std::process::Command`) rather than C bindings for simpler setup and cross-platform compatibility.
+- Tesseract auto-download is partially implemented; for now, manual installation of Tesseract is required. The code detects system-installed Tesseract in PATH or Program Files.
 
 
 ## Decision Log
@@ -57,7 +61,36 @@ This is inspired by the [gakumas-tools](https://github.com/surisuririsu/gakumas-
 
 ## Outcomes & Retrospective
 
-(To be filled upon completion)
+### What was delivered
+
+- Full OCR module (`src/ocr/`) with 5 submodules:
+  - `setup.rs` - Tesseract path detection (auto-download scaffolding for future)
+  - `preprocess.rs` - Color threshold preprocessing
+  - `engine.rs` - Tesseract CLI wrapper with TSV output parsing
+  - `extract.rs` - Pattern matching and score extraction
+  - `mod.rs` - Public API and `ocr_screenshot()` convenience function
+- "Test OCR" tray menu option for manual verification
+- `ocr_threshold` config field (default: 190)
+- Successfully extracts 9 scores from rehearsal result screenshots
+
+### What worked well
+
+- The gakumas-tools approach (full-image + pattern matching) worked excellently
+- Color thresholding effectively isolates score text from complex backgrounds
+- CLI-based Tesseract integration is simpler than C bindings
+- TSV output parsing provides reliable word-level confidence scores
+
+### What could be improved
+
+- Tesseract auto-download not fully implemented (requires manual installation)
+- Unit tests cannot run due to admin manifest requirement
+- Could add more robust error messages for common OCR failures
+
+### Lessons learned
+
+- Pattern matching on OCR output is more robust than region-based cropping
+- Confidence filtering (>60%) effectively removes noise
+- The regex `^((\d+[,.])*\d+|[—\-]+)$` reliably matches score patterns
 
 
 ## Context and Orientation

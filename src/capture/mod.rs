@@ -11,6 +11,6 @@ pub mod screenshot;
 pub mod window;
 
 pub use region::capture_region;
-pub use screenshot::{capture_gakumas, capture_gakumas_to_buffer};
+pub use screenshot::{capture_gakumas, capture_gakumas_to_buffer, capture_gakumas_to_buffer as capture_window_to_image};
 pub use window::find_gakumas_window;
 pub use window::get_client_area_info;

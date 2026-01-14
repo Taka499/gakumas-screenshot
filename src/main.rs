@@ -6,6 +6,7 @@
 mod automation;
 mod calibration;
 mod capture;
+mod ocr;
 
 use anyhow::{anyhow, Result};
 use chrono::Local;
@@ -40,6 +41,7 @@ const WM_TRAYICON: u32 = WM_USER + 1;
 // Menu item IDs
 const MENU_CALIBRATE: usize = 1001;
 const MENU_PREVIEW: usize = 1002;
+const MENU_TEST_OCR: usize = 1004;
 const MENU_EXIT: usize = 1003;
 
 /// Logs a message to both console and log file with timestamp.
@@ -303,6 +305,9 @@ unsafe extern "system" fn window_proc(
                     if let Err(e) = calibration::show_preview_once() {
                         log(&format!("Failed to show preview: {}", e));
                     }
+                } else if cmd == MENU_TEST_OCR {
+                    log("Test OCR requested");
+                    test_ocr();
                 } else if cmd == MENU_EXIT {
                     log("Exit requested");
                     PostQuitMessage(0);
@@ -370,6 +375,9 @@ fn show_context_menu(hwnd: HWND) {
         let preview_text = w!("Preview Regions");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_PREVIEW, preview_text);
 
+        let test_ocr_text = w!("Test OCR");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_TEST_OCR, test_ocr_text);
+
         let calibrate_text = w!("Calibrate Regions...");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CALIBRATE, calibrate_text);
 
@@ -390,5 +398,56 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         let _ = DestroyMenu(menu);
+    }
+}
+
+/// Tests OCR on the current game window screenshot
+fn test_ocr() {
+    // Find game window
+    let game_hwnd = match capture::find_gakumas_window() {
+        Ok(hwnd) => hwnd,
+        Err(e) => {
+            log(&format!("Could not find game window: {}", e));
+            return;
+        }
+    };
+
+    // Capture screenshot
+    log("Capturing screenshot for OCR...");
+    let img = match capture::capture_window_to_image(game_hwnd) {
+        Ok(img) => img,
+        Err(e) => {
+            log(&format!("Failed to capture screenshot: {}", e));
+            return;
+        }
+    };
+
+    // Run OCR pipeline
+    log("Running OCR...");
+    let config = automation::get_config();
+    let threshold = config.ocr_threshold;
+
+    match ocr::ocr_screenshot(&img, threshold) {
+        Ok(scores) => {
+            log("OCR succeeded!");
+            log(&format!("Stage 1: {:?}", scores[0]));
+            log(&format!("Stage 2: {:?}", scores[1]));
+            log(&format!("Stage 3: {:?}", scores[2]));
+
+            // Calculate totals
+            let total: u32 = scores.iter().flat_map(|s| s.iter()).sum();
+            log(&format!("Total: {}", total));
+        }
+        Err(e) => {
+            log(&format!("OCR failed: {}", e));
+
+            // Try to save preprocessed image for debugging
+            let preprocessed = ocr::threshold_bright_pixels(&img, threshold);
+            if let Err(save_err) = preprocessed.save("debug_preprocessed.png") {
+                log(&format!("Could not save debug image: {}", save_err));
+            } else {
+                log("Saved debug_preprocessed.png for inspection");
+            }
+        }
     }
 }

@@ -68,6 +68,13 @@ pub struct AutomationConfig {
     pub capture_delay_ms: u64,
     /// Test position for relative click hotkey
     pub test_click_position: ButtonConfig,
+    /// OCR brightness threshold (pixels with R, G, B all > threshold are kept)
+    #[serde(default = "default_ocr_threshold")]
+    pub ocr_threshold: u8,
+}
+
+fn default_ocr_threshold() -> u8 {
+    190
 }
 
 impl Default for AutomationConfig {
@@ -85,6 +92,7 @@ impl Default for AutomationConfig {
             loading_timeout_ms: 30000,
             capture_delay_ms: 500,
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },
+            ocr_threshold: default_ocr_threshold(),
         }
     }
 }

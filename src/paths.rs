@@ -23,9 +23,9 @@ pub fn get_screenshots_dir() -> PathBuf {
     get_exe_dir().join("screenshots")
 }
 
-/// Returns the assets directory: `<exe_dir>/assets/`
-pub fn get_assets_dir() -> PathBuf {
-    get_exe_dir().join("assets")
+/// Returns the rehearsal template directory: `<exe_dir>/resources/template/rehearsal/`
+pub fn get_rehearsal_template_dir() -> PathBuf {
+    get_exe_dir().join("resources").join("template").join("rehearsal")
 }
 
 /// Returns the tesseract directory: `<exe_dir>/tesseract/`
@@ -37,6 +37,6 @@ pub fn get_tesseract_dir() -> PathBuf {
 pub fn ensure_directories() -> std::io::Result<()> {
     std::fs::create_dir_all(get_logs_dir())?;
     std::fs::create_dir_all(get_screenshots_dir())?;
-    std::fs::create_dir_all(get_assets_dir())?;
+    std::fs::create_dir_all(get_rehearsal_template_dir())?;
     Ok(())
 }

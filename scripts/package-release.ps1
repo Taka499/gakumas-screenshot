@@ -36,13 +36,13 @@ if (Test-Path $releaseDir) {
 New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $releaseDir "logs") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $releaseDir "screenshots") -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $releaseDir "assets") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $releaseDir "resources/template/rehearsal") -Force | Out-Null
 
 Write-Host "Created directory structure:" -ForegroundColor Green
 Write-Host "  $releaseDir/"
 Write-Host "  $releaseDir/logs/"
 Write-Host "  $releaseDir/screenshots/"
-Write-Host "  $releaseDir/assets/"
+Write-Host "  $releaseDir/resources/template/rehearsal/"
 Write-Host ""
 
 # Copy executable
@@ -60,6 +60,16 @@ if (Test-Path "config.json") {
     Write-Host "Copied config.json" -ForegroundColor Green
 } else {
     Write-Host "No config.json found (will use defaults)" -ForegroundColor Gray
+}
+
+# Copy template files
+$templateSrc = "resources/template"
+$resourcesDst = Join-Path $releaseDir "resources"
+if (Test-Path $templateSrc) {
+    Copy-Item -Path $templateSrc -Destination $resourcesDst -Recurse -Force
+    Write-Host "Copied template folder to resources/" -ForegroundColor Green
+} else {
+    Write-Host "No template folder found" -ForegroundColor Gray
 }
 
 Write-Host ""

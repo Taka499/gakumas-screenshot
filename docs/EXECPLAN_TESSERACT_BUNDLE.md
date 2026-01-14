@@ -95,10 +95,12 @@ The user-visible outcome is: download the release folder, run the exe, and autom
 gakumas-screenshot/
 ├── gakumas-screenshot.exe (38.15 MB, includes embedded Tesseract)
 ├── config.json
-├── logs/           (created on startup)
-├── screenshots/    (created on startup)
-├── assets/         (created on startup)
-└── tesseract/      (extracted on first run, ~72 MB uncompressed)
+├── logs/               (created on startup)
+├── screenshots/        (created on startup)
+├── resources/
+│   └── template/
+│       └── rehearsal/  (reference images, copied from repo)
+└── tesseract/          (extracted on first run, ~72 MB uncompressed)
 ```
 
 ### Retrospective

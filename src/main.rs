@@ -542,7 +542,7 @@ fn capture_start_reference() {
     let config = automation::get_config();
 
     // Determine save path (use assets directory)
-    let ref_path = paths::get_assets_dir().join("start_button_ref.png");
+    let ref_path = paths::get_rehearsal_template_dir().join("start_button_ref.png");
 
     // Capture and save
     match automation::save_start_button_reference(game_hwnd, config, &ref_path) {
@@ -574,7 +574,7 @@ fn capture_skip_reference() {
     let config = automation::get_config();
 
     // Determine save path (use assets directory)
-    let ref_path = paths::get_assets_dir().join("skip_button_ref.png");
+    let ref_path = paths::get_rehearsal_template_dir().join("skip_button_ref.png");
 
     // Capture and save
     match automation::save_skip_button_reference(game_hwnd, config, &ref_path) {
@@ -606,7 +606,7 @@ fn capture_end_reference() {
     let config = automation::get_config();
 
     // Determine save path (use assets directory)
-    let ref_path = paths::get_assets_dir().join("end_button_ref.png");
+    let ref_path = paths::get_rehearsal_template_dir().join("end_button_ref.png");
 
     // Capture and save
     match automation::save_end_button_reference(game_hwnd, config, &ref_path) {

@@ -35,7 +35,7 @@ powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 Multi-module Rust application with these key components:
 
 - **src/main.rs**: Entry point, system tray, hotkey handling
-- **src/paths.rs**: Centralized path resolution (logs/, screenshots/, assets/, tesseract/)
+- **src/paths.rs**: Centralized path resolution (logs/, screenshots/, template/, tesseract/)
 - **src/capture/**: Window discovery and screenshot capture via Windows Graphics Capture API
 - **src/automation/**: Rehearsal automation state machine, button detection, OCR worker
 - **src/calibration/**: Interactive calibration wizard for button positions
@@ -57,7 +57,7 @@ Key technical details:
 - `HOTKEY_SENDINPUT_TEST` (3): Ctrl+Shift+F10 - SendInput click test
 - Output: `screenshots/gakumas_YYYYMMDD_HHMMSS.png`
 - Log: `logs/gakumas_screenshot.log`
-- Reference images: `assets/*.png`
+- Reference images: `resources/template/rehearsal/*.png`
 
 ## Windows API Notes
 

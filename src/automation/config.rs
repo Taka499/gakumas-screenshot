@@ -116,11 +116,11 @@ fn default_start_button_region() -> RelativeRect {
 }
 
 fn default_start_button_reference() -> String {
-    "assets/start_button_ref.png".to_string()
+    "resources/template/rehearsal/start_button_ref.png".to_string()
 }
 
 fn default_skip_button_reference() -> String {
-    "assets/skip_button_ref.png".to_string()
+    "resources/template/rehearsal/skip_button_ref.png".to_string()
 }
 
 fn default_end_button() -> ButtonConfig {
@@ -139,7 +139,7 @@ fn default_end_button_region() -> RelativeRect {
 }
 
 fn default_end_button_reference() -> String {
-    "assets/end_button_ref.png".to_string()
+    "resources/template/rehearsal/end_button_ref.png".to_string()
 }
 
 fn default_result_timeout_ms() -> u64 {

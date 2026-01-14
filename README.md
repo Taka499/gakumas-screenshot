@@ -27,7 +27,9 @@ gakumas-screenshot/
 ├── config.json             # 設定ファイル
 ├── logs/                   # ログファイル
 ├── screenshots/            # スクリーンショット保存先
-├── assets/                 # リファレンス画像
+├── resources/
+│   └── template/
+│       └── rehearsal/      # リハーサル用リファレンス画像
 └── tesseract/              # 初回起動時に自動展開
 ```
 
@@ -85,7 +87,9 @@ gakumas-screenshot/
 ├── config.json             # Configuration file
 ├── logs/                   # Log files
 ├── screenshots/            # Screenshot output
-├── assets/                 # Reference images
+├── resources/
+│   └── template/
+│       └── rehearsal/      # Rehearsal reference images
 └── tesseract/              # Auto-extracted on first run
 ```
 

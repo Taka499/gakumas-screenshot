@@ -60,8 +60,14 @@ pub struct AutomationConfig {
     pub skip_button: ButtonConfig,
     /// Region around skip button for brightness detection
     pub skip_button_region: RelativeRect,
-    /// Brightness threshold: above this = ready, below = loading
+    /// Brightness threshold: above this = Skip button enabled, below = disabled/dimmed
     pub brightness_threshold: f32,
+    /// Histogram similarity threshold: above this = Skip button detected (0.0-1.0)
+    #[serde(default = "default_histogram_threshold")]
+    pub histogram_threshold: f32,
+    /// Path to Skip button reference image for histogram comparison
+    #[serde(default = "default_skip_button_reference")]
+    pub skip_button_reference: String,
     /// Maximum time to wait for loading (milliseconds)
     pub loading_timeout_ms: u64,
     /// Delay after clicking skip before capturing result (milliseconds)
@@ -77,6 +83,14 @@ fn default_ocr_threshold() -> u8 {
     190
 }
 
+fn default_histogram_threshold() -> f32 {
+    0.85 // 85% similarity required to detect Skip button
+}
+
+fn default_skip_button_reference() -> String {
+    "skip_button_ref.png".to_string()
+}
+
 impl Default for AutomationConfig {
     fn default() -> Self {
         Self {
@@ -88,7 +102,11 @@ impl Default for AutomationConfig {
                 width: 0.10,
                 height: 0.10,
             },
-            brightness_threshold: 150.0,
+            // Brightness threshold: Skip button dimmed ~92, enabled ~97
+            // Set to 95 to detect when Skip button becomes enabled
+            brightness_threshold: 95.0,
+            histogram_threshold: default_histogram_threshold(),
+            skip_button_reference: default_skip_button_reference(),
             loading_timeout_ms: 30000,
             capture_delay_ms: 500,
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },

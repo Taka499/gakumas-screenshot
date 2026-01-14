@@ -17,17 +17,25 @@ This decoupled architecture means:
 
 ## Progress
 
-- [ ] Milestone 1: Event queue infrastructure
-- [ ] Milestone 2: Automation state machine
-- [ ] Milestone 3: OCR worker thread
-- [ ] Milestone 4: CSV writer
-- [ ] Milestone 5: Hotkey integration and abort mechanism
+- [x] Milestone 1: Event queue infrastructure
+- [x] Milestone 2: Automation state machine
+- [x] Milestone 3: OCR worker thread
+- [x] Milestone 4: CSV writer
+- [x] Milestone 5: Hotkey integration and abort mechanism
+- [x] Milestone 5b: Two-phase loading detection (histogram + brightness)
+- [ ] Milestone 5c: Click "終了" button to return to rehearsal page
 - [ ] Milestone 6: End-to-end testing
 
 
 ## Surprises & Discoveries
 
-(None yet)
+- HWND (Windows handle) contains a raw pointer that is not `Send`-safe, requiring extraction of the raw value as `usize` and reconstruction in the spawned thread. This is safe because Windows handles are valid across threads.
+- The `work_sender` field in AutomationContext needed to be moved when dropped to signal the OCR worker to finish, requiring careful ownership handling.
+- **Two-phase loading detection required**: Simple brightness detection was insufficient because:
+  1. After clicking Start, the brightness check would fire immediately on the old screen (before page change)
+  2. The Skip button is visible but dimmed during loading, then becomes enabled when ready
+  3. Solution: Phase 1 uses histogram comparison to detect Skip button appearance, Phase 2 uses brightness to detect Skip button enabled state
+- Abort check needed inside `wait_for_loading` loop, not just at state machine step boundaries, otherwise Ctrl+Shift+Q wouldn't work during the loading wait.
 
 
 ## Decision Log
@@ -64,6 +72,14 @@ This decoupled architecture means:
   Rationale: If game crashes or is closed, continuing automation is pointless and could cause errors. Check window validity before each state transition.
   Date/Author: 2026-01-13 / Clarification
 
+- Decision: Two-phase loading detection using histogram comparison + brightness threshold
+  Rationale: Single-phase brightness detection failed because it would detect the previous screen's brightness before the page changed. The Skip button appears immediately but dimmed (disabled) during loading, then becomes enabled (brighter) when ready. Phase 1 uses histogram comparison against a reference image to detect button appearance. Phase 2 uses brightness threshold to detect button enabled state.
+  Date/Author: 2026-01-14 / Implementation fix
+
+- Decision: Reference image captured via tray menu "Capture Skip Reference"
+  Rationale: Allows user to calibrate the reference for their specific game resolution and settings. Falls back to brightness-only detection if reference doesn't exist.
+  Date/Author: 2026-01-14 / Implementation
+
 
 ## Outcomes & Retrospective
 
@@ -79,12 +95,17 @@ This plan depends on:
 The automation flow follows this sequence for each iteration:
 
     1. Click "開始する" (Start) button
-    2. Wait for loading to complete (brightness detection)
-    3. Click "スキップ" (Skip) button
-    4. Wait for result screen to stabilize
-    5. Capture screenshot
-    6. Push screenshot path to OCR queue
-    7. Repeat from step 1
+    2. Wait for Skip button to appear (histogram comparison with reference image)
+    3. Wait for Skip button to become enabled (brightness threshold)
+    4. Click "スキップ" (Skip) button
+    5. Wait for result screen to stabilize (fixed delay)
+    6. Capture screenshot
+    7. Push screenshot path to OCR queue
+    8. [NOT YET IMPLEMENTED] Click "終了" button to return to rehearsal page
+    9. Repeat from step 1
+
+NOTE: Step 8 is not yet implemented. Currently the automation expects the game to
+automatically return to the rehearsal page after the result screen.
 
 The OCR worker runs in parallel:
 

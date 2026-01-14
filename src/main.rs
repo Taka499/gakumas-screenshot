@@ -36,12 +36,15 @@ const HOTKEY_CLICK_TEST: i32 = 2;
 const HOTKEY_SENDINPUT_TEST: i32 = 3;
 const HOTKEY_RELATIVE_CLICK: i32 = 4;
 const HOTKEY_BRIGHTNESS_TEST: i32 = 5;
+const HOTKEY_AUTOMATION: i32 = 6;
+const HOTKEY_ABORT: i32 = 7;
 const WM_TRAYICON: u32 = WM_USER + 1;
 
 // Menu item IDs
 const MENU_CALIBRATE: usize = 1001;
 const MENU_PREVIEW: usize = 1002;
 const MENU_TEST_OCR: usize = 1004;
+const MENU_CAPTURE_SKIP_REF: usize = 1005;
 const MENU_EXIT: usize = 1003;
 
 /// Logs a message to both console and log file with timestamp.
@@ -133,8 +136,30 @@ fn run_tray_app() -> Result<()> {
         )?;
     }
 
+    // Register global hotkey: Ctrl+Shift+A for automation
+    unsafe {
+        RegisterHotKey(
+            hwnd,
+            HOTKEY_AUTOMATION,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            0x41, // 'A' key
+        )?;
+    }
+
+    // Register global hotkey: Ctrl+Shift+Q for abort
+    unsafe {
+        RegisterHotKey(
+            hwnd,
+            HOTKEY_ABORT,
+            MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+            0x51, // 'Q' key
+        )?;
+    }
+
     log("Gakumas Screenshot Tool started");
     log("Hotkey: Ctrl+Shift+S (screenshot)");
+    log("Hotkey: Ctrl+Shift+A (start automation)");
+    log("Hotkey: Ctrl+Shift+Q (abort automation)");
     log("Hotkey: Ctrl+Shift+F9 (PostMessage click test)");
     log("Hotkey: Ctrl+Shift+F10 (SendInput click test - MOVES CURSOR)");
     log("Hotkey: Ctrl+Shift+F11 (brightness test)");
@@ -155,6 +180,8 @@ fn run_tray_app() -> Result<()> {
         let _ = UnregisterHotKey(hwnd, HOTKEY_SENDINPUT_TEST);
         let _ = UnregisterHotKey(hwnd, HOTKEY_RELATIVE_CLICK);
         let _ = UnregisterHotKey(hwnd, HOTKEY_BRIGHTNESS_TEST);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_AUTOMATION);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_ABORT);
         remove_tray_icon(hwnd);
         let _ = DestroyWindow(hwnd);
     }
@@ -276,6 +303,23 @@ unsafe extern "system" fn window_proc(
                         }
                         Err(e) => log(&format!("Could not find game window: {}", e)),
                     }
+                } else if hotkey_id == HOTKEY_AUTOMATION {
+                    log("Automation hotkey pressed!");
+                    if automation::is_automation_running() {
+                        log("Automation is already running");
+                    } else {
+                        match automation::start_automation(None) {
+                            Ok(()) => {} // Logging handled by start_automation
+                            Err(e) => log(&format!("Failed to start automation: {}", e)),
+                        }
+                    }
+                } else if hotkey_id == HOTKEY_ABORT {
+                    if automation::is_automation_running() {
+                        log("Abort hotkey pressed - stopping automation");
+                        automation::request_abort();
+                    } else {
+                        log("Abort hotkey pressed but no automation running");
+                    }
                 }
                 LRESULT(0)
             }
@@ -308,6 +352,9 @@ unsafe extern "system" fn window_proc(
                 } else if cmd == MENU_TEST_OCR {
                     log("Test OCR requested");
                     test_ocr();
+                } else if cmd == MENU_CAPTURE_SKIP_REF {
+                    log("Capture Skip Reference requested");
+                    capture_skip_reference();
                 } else if cmd == MENU_EXIT {
                     log("Exit requested");
                     PostQuitMessage(0);
@@ -377,6 +424,9 @@ fn show_context_menu(hwnd: HWND) {
 
         let test_ocr_text = w!("Test OCR");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_TEST_OCR, test_ocr_text);
+
+        let skip_ref_text = w!("Capture Skip Reference");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CAPTURE_SKIP_REF, skip_ref_text);
 
         let calibrate_text = w!("Calibrate Regions...");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CALIBRATE, calibrate_text);
@@ -448,6 +498,42 @@ fn test_ocr() {
             } else {
                 log("Saved debug_preprocessed.png for inspection");
             }
+        }
+    }
+}
+
+/// Captures the current Skip button region as a reference image for histogram comparison.
+/// The game should be showing the Skip button (dimmed or enabled) when this is called.
+fn capture_skip_reference() {
+    // Find game window
+    let game_hwnd = match capture::find_gakumas_window() {
+        Ok(hwnd) => hwnd,
+        Err(e) => {
+            log(&format!("Could not find game window: {}", e));
+            return;
+        }
+    };
+
+    let config = automation::get_config();
+
+    // Determine save path
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let ref_path = exe_dir.join(&config.skip_button_reference);
+
+    // Capture and save
+    match automation::save_skip_button_reference(game_hwnd, config, &ref_path) {
+        Ok(()) => {
+            log(&format!(
+                "Skip button reference saved to {}",
+                ref_path.display()
+            ));
+            log("The automation will now use this image to detect when the Skip button appears.");
+        }
+        Err(e) => {
+            log(&format!("Failed to capture Skip reference: {}", e));
         }
     }
 }

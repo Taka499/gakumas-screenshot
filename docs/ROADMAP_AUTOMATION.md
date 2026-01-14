@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.3 |
+| Version | 1.4 |
 | Created | 2026-01-12 |
-| Status | Phase 1 Complete |
+| Status | Phase 2 Complete |
 | Target | Complete automation of rehearsal → screenshot → OCR → statistics pipeline |
 
 ---
@@ -85,11 +85,17 @@ gakumas-screenshot/
 │   │   ├── window.rs        # Window discovery (find_gakumas_window)
 │   │   ├── screenshot.rs    # WGC capture pipeline (full window)
 │   │   └── region.rs        # Region capture (partial window)
-│   └── automation/
-│       ├── mod.rs           # Module exports
-│       ├── input.rs         # Mouse input simulation (click_at_relative)
-│       ├── config.rs        # Configuration loading (config.json)
-│       └── detection.rs     # Loading state detection (brightness)
+│   ├── automation/
+│   │   ├── mod.rs           # Module exports
+│   │   ├── input.rs         # Mouse input simulation (click_at_relative)
+│   │   ├── config.rs        # Configuration loading (config.json)
+│   │   └── detection.rs     # Loading state detection (brightness)
+│   └── ocr/
+│       ├── mod.rs           # Module exports, high-level ocr_screenshot()
+│       ├── setup.rs         # Tesseract path detection
+│       ├── preprocess.rs    # Color threshold preprocessing
+│       ├── engine.rs        # Tesseract CLI wrapper, TSV parsing
+│       └── extract.rs       # Pattern matching, score extraction
 ├── config.json              # Automation configuration (button positions, thresholds)
 ├── build.rs                 # Embeds Windows manifest
 ├── gakumas-screenshot.manifest  # UAC elevation (requireAdministrator)
@@ -99,6 +105,7 @@ gakumas-screenshot/
 └── docs/
     ├── PLANS.md             # ExecPlan authoring guidelines
     ├── EXECPLAN_PHASE1_REMAINING.md  # Phase 1 implementation plan
+    ├── EXECPLAN_PHASE2_OCR.md        # Phase 2 implementation plan (complete)
     └── ROADMAP_AUTOMATION.md  # This document
 ```
 
@@ -640,9 +647,26 @@ fn wait_for_loading_complete(
 
 ## 6. Phase 2: OCR Integration
 
+**Status: COMPLETE** (2026-01-14)
+
 ### 6.1 Objective
 
 Extract score values from captured screenshots using Tesseract OCR.
+
+### 6.1.1 Actual Implementation
+
+The implementation follows the gakumas-tools approach (full-image pattern matching) instead of the region-based approach originally planned:
+
+1. **Full-image preprocessing**: Apply color threshold to entire screenshot (keep pixels where R, G, B all > threshold)
+2. **Tesseract CLI**: Use `tesseract` command via `std::process::Command` with TSV output
+3. **Pattern matching**: Find score lines using regex `^((\d+[,.])*\d+|[—\-]+)$`
+4. **Confidence filtering**: Only accept lines with 60%+ average word confidence
+
+Key differences from original plan:
+- No region-based extraction (simpler, more robust)
+- CLI-based Tesseract (no C bindings, easier setup)
+- TSV output parsing for word-level confidence
+- `ocr_threshold` config field (default 190) instead of fixed value
 
 ### 6.2 Tesseract Setup
 
@@ -831,14 +855,15 @@ fn ocr_all_scores(
 
 ### 6.7 Deliverables for Phase 2
 
-| Deliverable | Description |
-|-------------|-------------|
-| Tesseract integration | `rusty-tesseract` wrapper functions |
-| `ocr_score()` function | Extract single score from image region |
-| `ocr_all_scores()` function | Extract all 9 scores from result screen |
-| Image preprocessing | Grayscale + thresholding pipeline |
-| Score region calibration | Tool to define 9 score regions |
-| Validation logic | Verify scores are within reasonable range |
+| Deliverable | Status | Description |
+|-------------|--------|-------------|
+| `src/ocr/mod.rs` | ✅ | Module exports, `ocr_screenshot()` entry point |
+| `src/ocr/setup.rs` | ✅ | Tesseract path detection |
+| `src/ocr/preprocess.rs` | ✅ | Color threshold preprocessing (`threshold_bright_pixels`) |
+| `src/ocr/engine.rs` | ✅ | Tesseract CLI wrapper, TSV parsing (`recognize_image`) |
+| `src/ocr/extract.rs` | ✅ | Pattern matching, score extraction (`extract_scores`) |
+| Tray menu "Test OCR" | ✅ | Manual testing via right-click menu |
+| `ocr_threshold` config | ✅ | Configurable threshold in config.json (default 190) |
 
 ---
 
@@ -1597,8 +1622,12 @@ chrono = "0.4"
 # Error handling
 anyhow = "1.0"
 
-# OCR (Tesseract)
-rusty-tesseract = "1.1"
+# OCR dependencies (Phase 2)
+reqwest = { version = "0.12", features = ["blocking"] }  # For potential auto-download
+dirs = "5.0"           # Standard directories
+regex = "1.10"         # Score pattern matching
+zip = "2.2"            # Archive handling
+tempfile = "3.14"      # Temporary files for Tesseract
 
 # Chart generation
 plotters = "0.3"
@@ -1712,8 +1741,7 @@ gakumas-screenshot/
 ```
 gakumas-screenshot/
 ├── src/
-│   ├── main.rs              # Entry point, CLI, message loop
-│   ├── lib.rs               # Library exports
+│   ├── main.rs              # Entry point, tray app, message loop
 │   ├── capture/
 │   │   ├── mod.rs
 │   │   ├── window.rs        # Window discovery
@@ -1721,13 +1749,16 @@ gakumas-screenshot/
 │   │   └── region.rs        # Region extraction
 │   ├── automation/
 │   │   ├── mod.rs
-│   │   ├── state.rs         # State machine
+│   │   ├── state.rs         # State machine (Phase 3)
 │   │   ├── input.rs         # Mouse/keyboard simulation
+│   │   ├── config.rs        # Configuration loading
 │   │   └── detection.rs     # Loading state detection
-│   ├── ocr/
-│   │   ├── mod.rs
-│   │   ├── tesseract.rs     # Tesseract wrapper
-│   │   └── preprocessing.rs # Image preprocessing
+│   ├── ocr/                 # Phase 2 - COMPLETE
+│   │   ├── mod.rs           # ocr_screenshot() entry point
+│   │   ├── setup.rs         # Tesseract path detection
+│   │   ├── preprocess.rs    # Color threshold preprocessing
+│   │   ├── engine.rs        # Tesseract CLI wrapper
+│   │   └── extract.rs       # Pattern matching, score extraction
 │   ├── analysis/
 │   │   ├── mod.rs
 │   │   ├── statistics.rs    # Stats calculation
@@ -1824,3 +1855,4 @@ gakumas-screenshot/
 | 1.1 | 2026-01-13 | Added experimental findings for mouse input methods |
 | 1.2 | 2026-01-13 | Refactored into modules; added admin manifest for UAC elevation |
 | 1.3 | 2026-01-13 | Phase 1 complete: config system, relative coords, region capture, brightness detection |
+| 1.4 | 2026-01-14 | Phase 2 complete: OCR module using full-image pattern matching with Tesseract CLI |

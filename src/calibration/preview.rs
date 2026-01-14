@@ -1,7 +1,11 @@
 //! Preview rendering for calibration visualization.
 //!
 //! Draws rectangles, crosshairs, and labels on screenshots to show
-//! configured regions and button positions.
+//! configured button positions and brightness detection region.
+//!
+//! Note: Score regions are no longer used. The OCR module processes
+//! the full image with pattern matching, eliminating the need for
+//! region-based calibration.
 
 use anyhow::Result;
 use image::{ImageBuffer, Rgba};
@@ -10,8 +14,6 @@ use std::process::Command;
 use crate::automation::AutomationConfig;
 
 /// Color constants for preview rendering.
-pub const COLOR_SCORE_REGION: Rgba<u8> = Rgba([0, 255, 0, 255]); // Green
-pub const COLOR_TOTAL_REGION: Rgba<u8> = Rgba([0, 0, 255, 255]); // Blue
 pub const COLOR_BUTTON: Rgba<u8> = Rgba([255, 0, 0, 255]); // Red
 pub const COLOR_BRIGHTNESS: Rgba<u8> = Rgba([255, 255, 0, 255]); // Yellow
 pub const COLOR_HIGHLIGHT: Rgba<u8> = Rgba([255, 128, 0, 255]); // Orange
@@ -22,8 +24,6 @@ pub enum HighlightedItem {
     StartButton,
     SkipButton,
     SkipButtonRegion,
-    ScoreRegion { stage: usize, character: usize },
-    StageTotalRegion { stage: usize },
 }
 
 /// Renders all configured regions onto a screenshot.
@@ -61,40 +61,6 @@ pub fn render_preview(
         COLOR_BRIGHTNESS,
         2,
     );
-
-    // Draw score regions if configured
-    if let Some(score_regions) = &config.score_regions {
-        for (stage, stage_regions) in score_regions.iter().enumerate() {
-            for (character, region) in stage_regions.iter().enumerate() {
-                draw_rect(
-                    &mut img,
-                    (region.x * width as f32) as u32,
-                    (region.y * height as f32) as u32,
-                    (region.width * width as f32) as u32,
-                    (region.height * height as f32) as u32,
-                    COLOR_SCORE_REGION,
-                    2,
-                );
-                // Label would go here (S1C1, etc.)
-                let _ = (stage, character); // suppress unused warnings for now
-            }
-        }
-    }
-
-    // Draw stage total regions if configured
-    if let Some(total_regions) = &config.stage_total_regions {
-        for (_stage, region) in total_regions.iter().enumerate() {
-            draw_rect(
-                &mut img,
-                (region.x * width as f32) as u32,
-                (region.y * height as f32) as u32,
-                (region.width * width as f32) as u32,
-                (region.height * height as f32) as u32,
-                COLOR_TOTAL_REGION,
-                2,
-            );
-        }
-    }
 
     img
 }
@@ -139,34 +105,6 @@ pub fn render_preview_with_highlight(
                 COLOR_HIGHLIGHT,
                 4,
             );
-        }
-        HighlightedItem::ScoreRegion { stage, character } => {
-            if let Some(score_regions) = &config.score_regions {
-                let r = &score_regions[*stage][*character];
-                draw_rect(
-                    &mut img,
-                    (r.x * width as f32) as u32,
-                    (r.y * height as f32) as u32,
-                    (r.width * width as f32) as u32,
-                    (r.height * height as f32) as u32,
-                    COLOR_HIGHLIGHT,
-                    4,
-                );
-            }
-        }
-        HighlightedItem::StageTotalRegion { stage } => {
-            if let Some(total_regions) = &config.stage_total_regions {
-                let r = &total_regions[*stage];
-                draw_rect(
-                    &mut img,
-                    (r.x * width as f32) as u32,
-                    (r.y * height as f32) as u32,
-                    (r.width * width as f32) as u32,
-                    (r.height * height as f32) as u32,
-                    COLOR_HIGHLIGHT,
-                    4,
-                );
-            }
         }
     }
 
@@ -291,10 +229,10 @@ mod tests {
     #[test]
     fn test_draw_rect() {
         let mut img = ImageBuffer::from_pixel(100, 100, Rgba([0, 0, 0, 255]));
-        draw_rect(&mut img, 10, 10, 50, 30, COLOR_SCORE_REGION, 2);
+        draw_rect(&mut img, 10, 10, 50, 30, COLOR_BRIGHTNESS, 2);
 
-        // Check top-left corner is green
-        assert_eq!(*img.get_pixel(10, 10), COLOR_SCORE_REGION);
+        // Check top-left corner is yellow
+        assert_eq!(*img.get_pixel(10, 10), COLOR_BRIGHTNESS);
         // Check center is still black
         assert_eq!(*img.get_pixel(35, 25), Rgba([0, 0, 0, 255]));
     }

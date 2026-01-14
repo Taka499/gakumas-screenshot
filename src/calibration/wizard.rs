@@ -1,8 +1,16 @@
 //! Calibration wizard implementation.
 //!
 //! Provides interactive calibration using hotkeys and console prompts.
+//!
+//! The wizard collects 3 items:
+//! 1. Start button position (for automation clicks)
+//! 2. Skip button position (for automation clicks)
+//! 3. Skip button region (for brightness-based loading detection)
+//!
+//! Note: Score regions are no longer needed. The OCR module uses full-image
+//! processing with pattern matching, making region calibration unnecessary.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::sync::Mutex;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -93,6 +101,9 @@ pub fn start_calibration(app_hwnd: HWND) -> Result<()> {
     log("=======================================================");
     log("           CALIBRATION MODE STARTED");
     log("=======================================================");
+    log("");
+    log("This wizard collects button positions for automation.");
+    log("Score regions are NOT needed - OCR uses full-image processing.");
     log("");
     log("Hotkeys:");
     log("  F1     - Record point (for buttons)");
@@ -223,14 +234,7 @@ fn handle_point_capture(ctx: &mut CalibrationContext) -> Result<()> {
 /// Handles F2 press - record top-left corner of a region.
 fn handle_top_left_capture(ctx: &mut CalibrationContext) -> Result<()> {
     // Check if current step expects a top-left corner
-    let is_top_left_step = matches!(
-        ctx.current_step,
-        CalibrationStep::SkipButtonRegionTopLeft
-            | CalibrationStep::ScoreRegionTopLeft { .. }
-            | CalibrationStep::StageTotalRegionTopLeft { .. }
-    );
-
-    if !is_top_left_step {
+    if !matches!(ctx.current_step, CalibrationStep::SkipButtonRegionTopLeft) {
         log("Current step doesn't expect top-left corner (F2).");
         return Ok(());
     }
@@ -250,16 +254,7 @@ fn handle_top_left_capture(ctx: &mut CalibrationContext) -> Result<()> {
     ctx.pending_top_left = Some((rel_x, rel_y));
 
     // Advance to bottom-right step
-    ctx.current_step = match ctx.current_step {
-        CalibrationStep::SkipButtonRegionTopLeft => CalibrationStep::SkipButtonRegionBottomRight,
-        CalibrationStep::ScoreRegionTopLeft { stage, character } => {
-            CalibrationStep::ScoreRegionBottomRight { stage, character }
-        }
-        CalibrationStep::StageTotalRegionTopLeft { stage } => {
-            CalibrationStep::StageTotalRegionBottomRight { stage }
-        }
-        _ => ctx.current_step.clone(),
-    };
+    ctx.current_step = CalibrationStep::SkipButtonRegionBottomRight;
 
     log("Now position cursor at BOTTOM-RIGHT corner and press F3.");
 
@@ -269,14 +264,7 @@ fn handle_top_left_capture(ctx: &mut CalibrationContext) -> Result<()> {
 /// Handles F3 press - record bottom-right corner of a region.
 fn handle_bottom_right_capture(ctx: &mut CalibrationContext) -> Result<()> {
     // Check if current step expects a bottom-right corner
-    let is_bottom_right_step = matches!(
-        ctx.current_step,
-        CalibrationStep::SkipButtonRegionBottomRight
-            | CalibrationStep::ScoreRegionBottomRight { .. }
-            | CalibrationStep::StageTotalRegionBottomRight { .. }
-    );
-
-    if !is_bottom_right_step {
+    if !matches!(ctx.current_step, CalibrationStep::SkipButtonRegionBottomRight) {
         log("Current step doesn't expect bottom-right corner (F3).");
         return Ok(());
     }
@@ -325,19 +313,7 @@ fn handle_bottom_right_capture(ctx: &mut CalibrationContext) -> Result<()> {
     };
 
     // Store the region
-    match ctx.current_step {
-        CalibrationStep::SkipButtonRegionBottomRight => {
-            ctx.items.skip_button_region = Some(region);
-        }
-        CalibrationStep::ScoreRegionBottomRight { stage, character } => {
-            ctx.items.score_regions[stage][character] = Some(region);
-        }
-        CalibrationStep::StageTotalRegionBottomRight { stage } => {
-            ctx.items.stage_total_regions[stage] = Some(region);
-        }
-        _ => {}
-    }
-
+    ctx.items.skip_button_region = Some(region);
     ctx.pending_top_left = None;
 
     // Show preview and ask for confirmation
@@ -369,45 +345,11 @@ fn show_step_preview(ctx: &CalibrationContext) -> Result<()> {
         preview_config.skip_button_region = region.clone();
     }
 
-    // Build score_regions array from captured items
-    let mut has_any_score = false;
-    let mut score_regions = [[RelativeRect::default(); 3]; 3];
-    for stage in 0..3 {
-        for character in 0..3 {
-            if let Some(ref region) = ctx.items.score_regions[stage][character] {
-                score_regions[stage][character] = region.clone();
-                has_any_score = true;
-            }
-        }
-    }
-    if has_any_score {
-        preview_config.score_regions = Some(score_regions);
-    }
-
-    // Build stage_total_regions array from captured items
-    let mut has_any_total = false;
-    let mut total_regions = [RelativeRect::default(); 3];
-    for stage in 0..3 {
-        if let Some(ref region) = ctx.items.stage_total_regions[stage] {
-            total_regions[stage] = region.clone();
-            has_any_total = true;
-        }
-    }
-    if has_any_total {
-        preview_config.stage_total_regions = Some(total_regions);
-    }
-
     // Determine highlight
     let highlight = match ctx.current_step {
         CalibrationStep::StartButton => Some(HighlightedItem::StartButton),
         CalibrationStep::SkipButton => Some(HighlightedItem::SkipButton),
         CalibrationStep::SkipButtonRegionBottomRight => Some(HighlightedItem::SkipButtonRegion),
-        CalibrationStep::ScoreRegionBottomRight { stage, character } => {
-            Some(HighlightedItem::ScoreRegion { stage, character })
-        }
-        CalibrationStep::StageTotalRegionBottomRight { stage } => {
-            Some(HighlightedItem::StageTotalRegion { stage })
-        }
         _ => None,
     };
 
@@ -432,25 +374,7 @@ fn advance_to_next_step(ctx: &mut CalibrationContext) -> Result<()> {
     ctx.current_step = match ctx.current_step {
         CalibrationStep::StartButton => CalibrationStep::SkipButton,
         CalibrationStep::SkipButton => CalibrationStep::SkipButtonRegionTopLeft,
-        CalibrationStep::SkipButtonRegionBottomRight => {
-            CalibrationStep::ScoreRegionTopLeft { stage: 0, character: 0 }
-        }
-        CalibrationStep::ScoreRegionBottomRight { stage, character } => {
-            if character < 2 {
-                CalibrationStep::ScoreRegionTopLeft { stage, character: character + 1 }
-            } else if stage < 2 {
-                CalibrationStep::ScoreRegionTopLeft { stage: stage + 1, character: 0 }
-            } else {
-                CalibrationStep::StageTotalRegionTopLeft { stage: 0 }
-            }
-        }
-        CalibrationStep::StageTotalRegionBottomRight { stage } => {
-            if stage < 2 {
-                CalibrationStep::StageTotalRegionTopLeft { stage: stage + 1 }
-            } else {
-                CalibrationStep::Complete
-            }
-        }
+        CalibrationStep::SkipButtonRegionBottomRight => CalibrationStep::Complete,
         _ => ctx.current_step.clone(),
     };
 
@@ -471,17 +395,6 @@ fn rewind_to_step_start(step: &CalibrationStep) -> CalibrationStep {
         // Region steps go back to TopLeft
         CalibrationStep::SkipButtonRegionTopLeft
         | CalibrationStep::SkipButtonRegionBottomRight => CalibrationStep::SkipButtonRegionTopLeft,
-        CalibrationStep::ScoreRegionTopLeft { stage, character }
-        | CalibrationStep::ScoreRegionBottomRight { stage, character } => {
-            CalibrationStep::ScoreRegionTopLeft {
-                stage: *stage,
-                character: *character,
-            }
-        }
-        CalibrationStep::StageTotalRegionTopLeft { stage }
-        | CalibrationStep::StageTotalRegionBottomRight { stage } => {
-            CalibrationStep::StageTotalRegionTopLeft { stage: *stage }
-        }
         CalibrationStep::Complete => CalibrationStep::Complete,
     }
 }
@@ -493,25 +406,7 @@ fn skip_current_step(ctx: &mut CalibrationContext) -> Result<()> {
         CalibrationStep::StartButton => CalibrationStep::SkipButton,
         CalibrationStep::SkipButton => CalibrationStep::SkipButtonRegionTopLeft,
         CalibrationStep::SkipButtonRegionTopLeft | CalibrationStep::SkipButtonRegionBottomRight => {
-            CalibrationStep::ScoreRegionTopLeft { stage: 0, character: 0 }
-        }
-        CalibrationStep::ScoreRegionTopLeft { stage, character }
-        | CalibrationStep::ScoreRegionBottomRight { stage, character } => {
-            if character < 2 {
-                CalibrationStep::ScoreRegionTopLeft { stage, character: character + 1 }
-            } else if stage < 2 {
-                CalibrationStep::ScoreRegionTopLeft { stage: stage + 1, character: 0 }
-            } else {
-                CalibrationStep::StageTotalRegionTopLeft { stage: 0 }
-            }
-        }
-        CalibrationStep::StageTotalRegionTopLeft { stage }
-        | CalibrationStep::StageTotalRegionBottomRight { stage } => {
-            if stage < 2 {
-                CalibrationStep::StageTotalRegionTopLeft { stage: stage + 1 }
-            } else {
-                CalibrationStep::Complete
-            }
+            CalibrationStep::Complete
         }
         CalibrationStep::Complete => CalibrationStep::Complete,
     };
@@ -555,22 +450,6 @@ fn print_step_instructions(step: &CalibrationStep) {
             log("Position cursor at TOP-LEFT corner of the skip button area.");
             log("Press F2 to record top-left.");
         }
-        CalibrationStep::ScoreRegionTopLeft { stage, character } => {
-            log(&format!(
-                "Score region for Stage {} Character {} (S{}C{}).",
-                stage + 1,
-                character + 1,
-                stage + 1,
-                character + 1
-            ));
-            log("Position cursor at TOP-LEFT corner of the score number.");
-            log("Press F2 to record top-left.");
-        }
-        CalibrationStep::StageTotalRegionTopLeft { stage } => {
-            log(&format!("Stage {} Total score region.", stage + 1));
-            log("Position cursor at TOP-LEFT corner of the total score.");
-            log("Press F2 to record top-left.");
-        }
         _ => {}
     }
 }
@@ -596,36 +475,6 @@ fn finish_calibration(items: CalibrationItems, game_hwnd: HWND) -> Result<()> {
     }
     if let Some(region) = items.skip_button_region {
         final_config.skip_button_region = region;
-    }
-
-    // Build score regions array
-    let mut score_regions_complete = true;
-    let mut score_regions = [[RelativeRect::default(); 3]; 3];
-    for stage in 0..3 {
-        for character in 0..3 {
-            if let Some(region) = &items.score_regions[stage][character] {
-                score_regions[stage][character] = region.clone();
-            } else {
-                score_regions_complete = false;
-            }
-        }
-    }
-    if score_regions_complete {
-        final_config.score_regions = Some(score_regions);
-    }
-
-    // Build stage total regions array
-    let mut total_regions_complete = true;
-    let mut total_regions = [RelativeRect::default(); 3];
-    for stage in 0..3 {
-        if let Some(region) = &items.stage_total_regions[stage] {
-            total_regions[stage] = region.clone();
-        } else {
-            total_regions_complete = false;
-        }
-    }
-    if total_regions_complete {
-        final_config.stage_total_regions = Some(total_regions);
     }
 
     // Save config

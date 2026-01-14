@@ -6,8 +6,9 @@ fn main() {
     // Embed the Windows manifest that requests administrator privileges
     let _ = embed_resource::compile("gakumas-screenshot.rc", embed_resource::NONE);
 
-    // Copy template folder to target directory
+    // Copy template folder and config to target directory
     copy_templates();
+    copy_config();
 }
 
 /// Copies the template folder to the target directory so the executable can find reference images.
@@ -47,5 +48,23 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
                 let _ = fs::copy(&src_path, &dst_path);
             }
         }
+    }
+}
+
+/// Copies config.json to the target directory.
+fn copy_config() {
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_path = Path::new(&out_dir);
+    let target_dir = out_path
+        .ancestors()
+        .nth(3)
+        .expect("Could not find target directory");
+
+    let config_src = Path::new("config.json");
+    let config_dst = target_dir.join("config.json");
+
+    if config_src.exists() {
+        let _ = fs::copy(config_src, &config_dst);
+        println!("cargo:rerun-if-changed=config.json");
     }
 }

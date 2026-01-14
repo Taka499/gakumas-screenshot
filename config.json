@@ -1,9 +1,45 @@
 {
-  "start_button": { "x": 0.5, "y": 0.85 },
-  "skip_button": { "x": 0.82, "y": 0.82 },
-  "skip_button_region": { "x": 0.7, "y": 0.80, "width": 0.22, "height": 0.04 },
-  "brightness_threshold": 150.0,
+  "start_button": {
+    "x": 0.5,
+    "y": 0.85
+  },
+  "start_button_region": {
+    "x": 0.358,
+    "y": 0.834,
+    "width": 0.265,
+    "height": 0.029
+  },
+  "start_button_reference": "resources/template/rehearsal/start_button_ref.png",
+  "skip_button": {
+    "x": 0.82,
+    "y": 0.82
+  },
+  "skip_button_region": {
+    "x": 0.7,
+    "y": 0.8,
+    "width": 0.22,
+    "height": 0.04
+  },
+  "brightness_threshold": 95.0,
+  "histogram_threshold": 0.85,
+  "skip_button_reference": "resources/template/rehearsal/skip_button_ref.png",
+  "end_button": {
+    "x": 0.5,
+    "y": 0.9
+  },
+  "end_button_region": {
+    "x": 0.45,
+    "y": 0.89,
+    "width": 0.14,
+    "height": 0.035
+  },
+  "end_button_reference": "resources/template/rehearsal/end_button_ref.png",
   "loading_timeout_ms": 30000,
+  "result_timeout_ms": 30000,
   "capture_delay_ms": 500,
-  "test_click_position": { "x": 0.92, "y": 0.84 }
+  "test_click_position": {
+    "x": 0.5,
+    "y": 0.5
+  },
+  "ocr_threshold": 190
 }

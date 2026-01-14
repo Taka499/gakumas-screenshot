@@ -56,6 +56,12 @@ impl Default for ButtonConfig {
 pub struct AutomationConfig {
     /// Position of the "開始する" (Start) button
     pub start_button: ButtonConfig,
+    /// Region around start button for histogram comparison (detecting rehearsal page)
+    #[serde(default = "default_start_button_region")]
+    pub start_button_region: RelativeRect,
+    /// Path to Start button reference image for histogram comparison
+    #[serde(default = "default_start_button_reference")]
+    pub start_button_reference: String,
     /// Position of the "スキップ" (Skip) button
     pub skip_button: ButtonConfig,
     /// Region around skip button for brightness detection
@@ -68,8 +74,20 @@ pub struct AutomationConfig {
     /// Path to Skip button reference image for histogram comparison
     #[serde(default = "default_skip_button_reference")]
     pub skip_button_reference: String,
+    /// Position of the "終了" (End) button on result page
+    #[serde(default = "default_end_button")]
+    pub end_button: ButtonConfig,
+    /// Region around end button for histogram comparison (detecting result page)
+    #[serde(default = "default_end_button_region")]
+    pub end_button_region: RelativeRect,
+    /// Path to End button reference image for histogram comparison
+    #[serde(default = "default_end_button_reference")]
+    pub end_button_reference: String,
     /// Maximum time to wait for loading (milliseconds)
     pub loading_timeout_ms: u64,
+    /// Maximum time to wait for result page (milliseconds)
+    #[serde(default = "default_result_timeout_ms")]
+    pub result_timeout_ms: u64,
     /// Delay after clicking skip before capturing result (milliseconds)
     pub capture_delay_ms: u64,
     /// Test position for relative click hotkey
@@ -84,17 +102,56 @@ fn default_ocr_threshold() -> u8 {
 }
 
 fn default_histogram_threshold() -> f32 {
-    0.85 // 85% similarity required to detect Skip button
+    0.85 // 85% similarity required to detect buttons
+}
+
+fn default_start_button_region() -> RelativeRect {
+    // Region around the "開始する" button for histogram comparison
+    RelativeRect {
+        x: 0.358,
+        y: 0.834,
+        width: 0.265,
+        height: 0.029,
+    }
+}
+
+fn default_start_button_reference() -> String {
+    "start_button_ref.png".to_string()
 }
 
 fn default_skip_button_reference() -> String {
     "skip_button_ref.png".to_string()
 }
 
+fn default_end_button() -> ButtonConfig {
+    // Default position for "終了" button (bottom center of result page)
+    ButtonConfig { x: 0.5, y: 0.9 }
+}
+
+fn default_end_button_region() -> RelativeRect {
+    // Region around the "終了" button for histogram comparison
+    RelativeRect {
+        x: 0.45,
+        y: 0.89,
+        width: 0.14,
+        height: 0.035,
+    }
+}
+
+fn default_end_button_reference() -> String {
+    "end_button_ref.png".to_string()
+}
+
+fn default_result_timeout_ms() -> u64 {
+    30000 // 30 seconds to wait for result page
+}
+
 impl Default for AutomationConfig {
     fn default() -> Self {
         Self {
             start_button: ButtonConfig { x: 0.5, y: 0.85 },
+            start_button_region: default_start_button_region(),
+            start_button_reference: default_start_button_reference(),
             skip_button: ButtonConfig { x: 0.82, y: 0.82 },
             skip_button_region: RelativeRect {
                 x: 0.7,
@@ -107,7 +164,11 @@ impl Default for AutomationConfig {
             brightness_threshold: 95.0,
             histogram_threshold: default_histogram_threshold(),
             skip_button_reference: default_skip_button_reference(),
+            end_button: default_end_button(),
+            end_button_region: default_end_button_region(),
+            end_button_reference: default_end_button_reference(),
             loading_timeout_ms: 30000,
+            result_timeout_ms: default_result_timeout_ms(),
             capture_delay_ms: 500,
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },
             ocr_threshold: default_ocr_threshold(),

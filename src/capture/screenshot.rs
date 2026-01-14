@@ -76,6 +76,9 @@ pub fn capture_gakumas() -> Result<PathBuf> {
     let session = frame_pool.CreateCaptureSession(&item)?;
     crate::log("Capture session created");
 
+    // Disable cursor capture to exclude cursor from screenshots
+    session.SetIsCursorCaptureEnabled(false)?;
+
     // Set up frame arrival handling
     let frame_arrived = Arc::new(AtomicBool::new(false));
     let frame_arrived_clone = frame_arrived.clone();
@@ -291,6 +294,9 @@ pub fn capture_gakumas_to_buffer(hwnd: HWND) -> Result<ImageBuffer<Rgba<u8>, Vec
 
     // Create capture session
     let session = frame_pool.CreateCaptureSession(&item)?;
+
+    // Disable cursor capture to exclude cursor from screenshots
+    session.SetIsCursorCaptureEnabled(false)?;
 
     // Set up frame arrival handling
     let frame_arrived = Arc::new(AtomicBool::new(false));

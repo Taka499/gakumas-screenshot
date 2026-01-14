@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.4 |
+| Version | 1.5 |
 | Created | 2026-01-12 |
-| Status | Phase 2 Complete |
+| Status | Phase 3 Complete |
 | Target | Complete automation of rehearsal → screenshot → OCR → statistics pipeline |
 
 ---
@@ -79,17 +79,28 @@ The application is organized into modules:
 ```
 gakumas-screenshot/
 ├── src/
-│   ├── main.rs              # Application shell, tray, message loop
+│   ├── main.rs              # Application shell, tray, message loop, hotkeys
 │   ├── capture/
 │   │   ├── mod.rs           # Module exports
 │   │   ├── window.rs        # Window discovery (find_gakumas_window)
-│   │   ├── screenshot.rs    # WGC capture pipeline (full window)
-│   │   └── region.rs        # Region capture (partial window)
+│   │   ├── screenshot.rs    # WGC capture pipeline (full window, cursor excluded)
+│   │   └── region.rs        # Region capture (partial window, cursor excluded)
 │   ├── automation/
 │   │   ├── mod.rs           # Module exports
-│   │   ├── input.rs         # Mouse input simulation (click_at_relative)
 │   │   ├── config.rs        # Configuration loading (config.json)
-│   │   └── detection.rs     # Loading state detection (brightness)
+│   │   ├── csv_writer.rs    # CSV output for results
+│   │   ├── detection.rs     # Page detection (histogram), loading detection (brightness)
+│   │   ├── input.rs         # Mouse input simulation (click_at_relative)
+│   │   ├── ocr_worker.rs    # Background OCR processing thread
+│   │   ├── queue.rs         # Thread-safe job queue
+│   │   ├── runner.rs        # Main automation loop
+│   │   └── state.rs         # AutomationState enum
+│   ├── calibration/
+│   │   ├── mod.rs           # Module exports
+│   │   ├── coords.rs        # Coordinate conversion utilities
+│   │   ├── preview.rs       # Preview window rendering
+│   │   ├── state.rs         # CalibrationState, CalibrationItems
+│   │   └── wizard.rs        # 9-step calibration wizard
 │   └── ocr/
 │       ├── mod.rs           # Module exports, high-level ocr_screenshot()
 │       ├── setup.rs         # Tesseract path detection
@@ -98,7 +109,7 @@ gakumas-screenshot/
 │       └── extract.rs       # Pattern matching, score extraction
 ├── config.json              # Automation configuration (button positions, thresholds)
 ├── build.rs                 # Embeds Windows manifest
-├── gakumas-screenshot.manifest  # UAC elevation (requireAdministrator)
+├── gakumas-screenshot.exe.manifest  # UAC elevation (requireAdministrator)
 ├── gakumas-screenshot.rc    # Resource file for manifest
 ├── Cargo.toml               # Dependencies and build config
 ├── CLAUDE.md                # Development guidance
@@ -106,6 +117,7 @@ gakumas-screenshot/
     ├── PLANS.md             # ExecPlan authoring guidelines
     ├── EXECPLAN_PHASE1_REMAINING.md  # Phase 1 implementation plan
     ├── EXECPLAN_PHASE2_OCR.md        # Phase 2 implementation plan (complete)
+    ├── EXECPLAN_PHASE3_AUTOMATION.md # Phase 3 implementation plan (complete)
     └── ROADMAP_AUTOMATION.md  # This document
 ```
 
@@ -869,9 +881,30 @@ fn ocr_all_scores(
 
 ## 7. Phase 3: Automation Loop
 
+**Status: COMPLETE** (2026-01-15)
+
 ### 7.1 Objective
 
 Combine all components into a cohesive automation loop that runs N iterations.
+
+### 7.1.1 Actual Implementation
+
+The automation loop was implemented with the following features:
+
+1. **State machine pattern**: Manages automation flow through well-defined states
+2. **Histogram comparison**: Detects page state by comparing screen regions against reference images (Start, Skip, End buttons)
+3. **Brightness threshold**: Detects when Skip button becomes enabled (loading complete)
+4. **Background OCR processing**: OCR runs in a separate thread to avoid blocking automation
+5. **CSV output**: Results written to timestamped CSV files
+6. **Abort mechanism**: Ctrl+Shift+Escape to stop automation at any time
+7. **9-step calibration wizard**: Calibrates all 3 buttons (position + detection region each)
+8. **Cursor exclusion**: Screenshots exclude the mouse cursor via `SetIsCursorCaptureEnabled(false)`
+
+Key flow:
+```
+Start Page Detection → Click Start → Wait for Loading →
+Click Skip → Wait for Result → Capture & OCR → Click End → Loop
+```
 
 ### 7.2 State Machine Design
 
@@ -1078,14 +1111,19 @@ fn report_progress(&self) {
 
 ### 7.7 Deliverables for Phase 3
 
-| Deliverable | Description |
-|-------------|-------------|
-| `AutomationState` enum | State machine states |
-| `AutomationContext` struct | Holds all automation state |
-| `run()` method | Main automation loop |
-| Abort mechanism | Hotkey to stop automation |
-| Progress reporting | Console + tray icon updates |
-| Error recovery | Timeout handling, validation |
+| Deliverable | Status | Description |
+|-------------|--------|-------------|
+| `src/automation/state.rs` | ✅ | `AutomationState` enum with all states |
+| `src/automation/runner.rs` | ✅ | Main automation loop, state transitions |
+| `src/automation/queue.rs` | ✅ | Thread-safe queue for OCR jobs |
+| `src/automation/ocr_worker.rs` | ✅ | Background OCR processing thread |
+| `src/automation/csv_writer.rs` | ✅ | CSV output for results |
+| `src/automation/detection.rs` | ✅ | `wait_for_start_page`, `wait_for_loading`, `wait_for_result` |
+| `src/calibration/` module | ✅ | 9-step calibration wizard |
+| Abort mechanism (Ctrl+Shift+Esc) | ✅ | Hotkey to stop automation |
+| Tray menu "Start Automation" | ✅ | Menu item to begin automation loop |
+| Cursor exclusion | ✅ | `SetIsCursorCaptureEnabled(false)` in all capture functions |
+| Reference image capture | ✅ | Menu items for Start, Skip, End button references |
 
 ---
 
@@ -1736,49 +1774,65 @@ gakumas-screenshot/
     └── ROADMAP_AUTOMATION.md
 ```
 
-### 11.2 Target Structure (After All Phases)
+### 11.2 Current Structure (After Phase 3)
 
 ```
 gakumas-screenshot/
 ├── src/
-│   ├── main.rs              # Entry point, tray app, message loop
+│   ├── main.rs              # Entry point, tray app, message loop, hotkeys
 │   ├── capture/
-│   │   ├── mod.rs
-│   │   ├── window.rs        # Window discovery
-│   │   ├── screenshot.rs    # WGC capture logic
-│   │   └── region.rs        # Region extraction
+│   │   ├── mod.rs           # Module exports
+│   │   ├── window.rs        # Window discovery (find_gakumas_window)
+│   │   ├── screenshot.rs    # WGC capture (full window, cursor excluded)
+│   │   └── region.rs        # Region capture (partial window, cursor excluded)
 │   ├── automation/
-│   │   ├── mod.rs
-│   │   ├── state.rs         # State machine (Phase 3)
-│   │   ├── input.rs         # Mouse/keyboard simulation
-│   │   ├── config.rs        # Configuration loading
-│   │   └── detection.rs     # Loading state detection
-│   ├── ocr/                 # Phase 2 - COMPLETE
-│   │   ├── mod.rs           # ocr_screenshot() entry point
-│   │   ├── setup.rs         # Tesseract path detection
-│   │   ├── preprocess.rs    # Color threshold preprocessing
-│   │   ├── engine.rs        # Tesseract CLI wrapper
-│   │   └── extract.rs       # Pattern matching, score extraction
-│   ├── analysis/
-│   │   ├── mod.rs
-│   │   ├── statistics.rs    # Stats calculation
-│   │   └── charts.rs        # Chart generation
-│   ├── config/
-│   │   ├── mod.rs
-│   │   └── types.rs         # Configuration structs
-│   └── ui/
-│       ├── mod.rs
-│       ├── tray.rs          # System tray
-│       └── calibration.rs   # Calibration wizard
-├── config/
-│   └── default.json         # Default configuration
+│   │   ├── mod.rs           # Module exports
+│   │   ├── config.rs        # Configuration loading (config.json)
+│   │   ├── csv_writer.rs    # CSV output for results
+│   │   ├── detection.rs     # Page detection (histogram), loading detection (brightness)
+│   │   ├── input.rs         # Mouse input simulation (SendInput)
+│   │   ├── ocr_worker.rs    # Background OCR processing thread
+│   │   ├── queue.rs         # Thread-safe job queue
+│   │   ├── runner.rs        # Main automation loop
+│   │   └── state.rs         # AutomationState enum
+│   ├── calibration/
+│   │   ├── mod.rs           # Module exports
+│   │   ├── coords.rs        # Coordinate conversion utilities
+│   │   ├── preview.rs       # Preview window rendering
+│   │   ├── state.rs         # CalibrationState, CalibrationItems
+│   │   └── wizard.rs        # 9-step calibration wizard
+│   └── ocr/
+│       ├── mod.rs           # ocr_screenshot() entry point
+│       ├── setup.rs         # Tesseract path detection
+│       ├── preprocess.rs    # Color threshold preprocessing
+│       ├── engine.rs        # Tesseract CLI wrapper
+│       └── extract.rs       # Pattern matching, score extraction
+├── config.json              # Automation configuration (button positions, thresholds)
 ├── Cargo.toml
 ├── Cargo.lock
-├── CLAUDE.md
-├── README.md
+├── build.rs                 # Embeds Windows manifest
+├── gakumas-screenshot.exe.manifest  # UAC elevation (requireAdministrator)
+├── gakumas-screenshot.rc    # Resource file for manifest
+├── CLAUDE.md                # Development guidance
 └── docs/
-    ├── ROADMAP_AUTOMATION.md
-    └── CALIBRATION_GUIDE.md
+    ├── PLANS.md             # ExecPlan authoring guidelines
+    ├── EXECPLAN_PHASE1_REMAINING.md
+    ├── EXECPLAN_PHASE2_OCR.md
+    ├── EXECPLAN_PHASE3_AUTOMATION.md
+    └── ROADMAP_AUTOMATION.md  # This document
+```
+
+### 11.3 Target Structure (After All Phases)
+
+```
+gakumas-screenshot/
+├── src/
+│   ├── ...                  # (current structure)
+│   └── analysis/            # Phase 4 - PLANNED
+│       ├── mod.rs
+│       ├── statistics.rs    # Stats calculation
+│       └── charts.rs        # Chart generation with plotters
+└── ...
 ```
 
 ---
@@ -1843,7 +1897,8 @@ gakumas-screenshot/
 | Game ignores PostMessage clicks | Game requires foreground focus; use SendInput with SetForegroundWindow instead |
 | Process name substring match | Use exact match (`== "gakumas.exe"`) to avoid matching `gakumas-screenshot.exe` |
 | Config not loading | Config is loaded from exe directory, not CWD; copy config.json next to the exe |
-| Brightness unreliable for State 1→2 | Use OCR to detect "スキップ" text appearing; brightness only for State 2→3 |
+| Brightness unreliable for State 1→2 | Use histogram comparison against reference images instead of brightness for page detection |
+| Cursor appears in screenshots | Fixed: Use `SetIsCursorCaptureEnabled(false)` on capture session |
 
 ---
 
@@ -1856,3 +1911,4 @@ gakumas-screenshot/
 | 1.2 | 2026-01-13 | Refactored into modules; added admin manifest for UAC elevation |
 | 1.3 | 2026-01-13 | Phase 1 complete: config system, relative coords, region capture, brightness detection |
 | 1.4 | 2026-01-14 | Phase 2 complete: OCR module using full-image pattern matching with Tesseract CLI |
+| 1.5 | 2026-01-15 | Phase 3 complete: automation loop with state machine, histogram-based page detection, 9-step calibration, cursor exclusion, background OCR, CSV output |

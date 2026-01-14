@@ -14,7 +14,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{IsWindow, SetForegroundWindow};
 
 use crate::automation::config::AutomationConfig;
-use crate::automation::detection::wait_for_loading;
+use crate::automation::detection::{wait_for_loading, wait_for_result, wait_for_start_page};
 use crate::automation::input::click_at_relative;
 use crate::automation::queue::OcrWorkItem;
 use crate::capture::capture_gakumas_to_buffer;
@@ -27,16 +27,20 @@ pub static ABORT_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub enum AutomationState {
     /// Waiting to start (initial state)
     Idle,
+    /// Waiting for rehearsal start page to appear
+    WaitingForStartPage,
     /// Clicking the Start button
     ClickingStart,
     /// Waiting for loading to complete
     WaitingForLoading,
     /// Clicking the Skip button
     ClickingSkip,
-    /// Waiting for result screen to stabilize
+    /// Waiting for result screen to appear
     WaitingForResult,
     /// Capturing the result screenshot
     Capturing,
+    /// Clicking the End button to return to rehearsal page
+    ClickingEnd,
     /// Checking if we should continue or stop
     CheckingLoop,
     /// All iterations complete
@@ -51,11 +55,13 @@ impl std::fmt::Display for AutomationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AutomationState::Idle => write!(f, "Idle"),
+            AutomationState::WaitingForStartPage => write!(f, "Waiting for start page"),
             AutomationState::ClickingStart => write!(f, "Clicking Start"),
             AutomationState::WaitingForLoading => write!(f, "Waiting for loading"),
             AutomationState::ClickingSkip => write!(f, "Clicking Skip"),
             AutomationState::WaitingForResult => write!(f, "Waiting for result"),
             AutomationState::Capturing => write!(f, "Capturing"),
+            AutomationState::ClickingEnd => write!(f, "Clicking End"),
             AutomationState::CheckingLoop => write!(f, "Checking loop"),
             AutomationState::Complete => write!(f, "Complete"),
             AutomationState::Error(msg) => write!(f, "Error: {}", msg),
@@ -130,8 +136,33 @@ impl AutomationContext {
                     "Starting automation: {} iterations",
                     self.max_iterations
                 ));
-                self.state = AutomationState::ClickingStart;
+                self.state = AutomationState::WaitingForStartPage;
                 Ok(true)
+            }
+
+            AutomationState::WaitingForStartPage => {
+                crate::log(&format!(
+                    "Iteration {}/{}: Waiting for rehearsal page...",
+                    self.current_iteration, self.max_iterations
+                ));
+
+                match wait_for_start_page(self.hwnd, &self.config) {
+                    Ok(()) => {
+                        self.state = AutomationState::ClickingStart;
+                        Ok(true)
+                    }
+                    Err(e) => {
+                        // Check if this was an abort request
+                        if ABORT_REQUESTED.load(Ordering::SeqCst) {
+                            crate::log("Abort requested during start page wait");
+                            self.state = AutomationState::Aborted;
+                        } else {
+                            self.state =
+                                AutomationState::Error(format!("Start page wait failed: {}", e));
+                        }
+                        Ok(false)
+                    }
+                }
             }
 
             AutomationState::ClickingStart => {
@@ -199,13 +230,27 @@ impl AutomationContext {
 
             AutomationState::WaitingForResult => {
                 crate::log(&format!(
-                    "Iteration {}/{}: Waiting for result screen ({} ms)",
-                    self.current_iteration, self.max_iterations, self.config.capture_delay_ms
+                    "Iteration {}/{}: Waiting for result screen...",
+                    self.current_iteration, self.max_iterations
                 ));
 
-                std::thread::sleep(Duration::from_millis(self.config.capture_delay_ms));
-                self.state = AutomationState::Capturing;
-                Ok(true)
+                match wait_for_result(self.hwnd, &self.config) {
+                    Ok(()) => {
+                        self.state = AutomationState::Capturing;
+                        Ok(true)
+                    }
+                    Err(e) => {
+                        // Check if this was an abort request
+                        if ABORT_REQUESTED.load(Ordering::SeqCst) {
+                            crate::log("Abort requested during result wait");
+                            self.state = AutomationState::Aborted;
+                        } else {
+                            self.state =
+                                AutomationState::Error(format!("Result wait failed: {}", e));
+                        }
+                        Ok(false)
+                    }
+                }
             }
 
             AutomationState::Capturing => {
@@ -250,6 +295,28 @@ impl AutomationContext {
                     // Don't fail automation for this - OCR is secondary
                 }
 
+                self.state = AutomationState::ClickingEnd;
+                Ok(true)
+            }
+
+            AutomationState::ClickingEnd => {
+                crate::log(&format!(
+                    "Iteration {}/{}: Clicking End button",
+                    self.current_iteration, self.max_iterations
+                ));
+
+                if let Err(e) = click_with_focus(
+                    self.hwnd,
+                    self.config.end_button.x,
+                    self.config.end_button.y,
+                ) {
+                    self.state = AutomationState::Error(format!("Failed to click End: {}", e));
+                    return Ok(false);
+                }
+
+                // Small delay to let the page transition start
+                std::thread::sleep(Duration::from_millis(500));
+
                 self.state = AutomationState::CheckingLoop;
                 Ok(true)
             }
@@ -265,7 +332,8 @@ impl AutomationContext {
                     Ok(false)
                 } else {
                     self.current_iteration += 1;
-                    self.state = AutomationState::ClickingStart;
+                    // Wait for start page before clicking Start again
+                    self.state = AutomationState::WaitingForStartPage;
                     Ok(true)
                 }
             }

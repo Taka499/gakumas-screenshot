@@ -194,7 +194,7 @@ fn handle_point_capture(ctx: &mut CalibrationContext) -> Result<()> {
     // Check if current step expects a point
     let is_button_step = matches!(
         ctx.current_step,
-        CalibrationStep::StartButton | CalibrationStep::SkipButton
+        CalibrationStep::StartButton | CalibrationStep::SkipButton | CalibrationStep::EndButton
     );
 
     if !is_button_step {
@@ -220,6 +220,7 @@ fn handle_point_capture(ctx: &mut CalibrationContext) -> Result<()> {
     match ctx.current_step {
         CalibrationStep::StartButton => ctx.items.start_button = Some(button),
         CalibrationStep::SkipButton => ctx.items.skip_button = Some(button),
+        CalibrationStep::EndButton => ctx.items.end_button = Some(button),
         _ => {}
     }
 
@@ -234,7 +235,14 @@ fn handle_point_capture(ctx: &mut CalibrationContext) -> Result<()> {
 /// Handles F2 press - record top-left corner of a region.
 fn handle_top_left_capture(ctx: &mut CalibrationContext) -> Result<()> {
     // Check if current step expects a top-left corner
-    if !matches!(ctx.current_step, CalibrationStep::SkipButtonRegionTopLeft) {
+    let is_top_left_step = matches!(
+        ctx.current_step,
+        CalibrationStep::StartButtonRegionTopLeft
+            | CalibrationStep::SkipButtonRegionTopLeft
+            | CalibrationStep::EndButtonRegionTopLeft
+    );
+
+    if !is_top_left_step {
         log("Current step doesn't expect top-left corner (F2).");
         return Ok(());
     }
@@ -254,7 +262,12 @@ fn handle_top_left_capture(ctx: &mut CalibrationContext) -> Result<()> {
     ctx.pending_top_left = Some((rel_x, rel_y));
 
     // Advance to bottom-right step
-    ctx.current_step = CalibrationStep::SkipButtonRegionBottomRight;
+    ctx.current_step = match ctx.current_step {
+        CalibrationStep::StartButtonRegionTopLeft => CalibrationStep::StartButtonRegionBottomRight,
+        CalibrationStep::SkipButtonRegionTopLeft => CalibrationStep::SkipButtonRegionBottomRight,
+        CalibrationStep::EndButtonRegionTopLeft => CalibrationStep::EndButtonRegionBottomRight,
+        _ => ctx.current_step.clone(),
+    };
 
     log("Now position cursor at BOTTOM-RIGHT corner and press F3.");
 
@@ -264,7 +277,14 @@ fn handle_top_left_capture(ctx: &mut CalibrationContext) -> Result<()> {
 /// Handles F3 press - record bottom-right corner of a region.
 fn handle_bottom_right_capture(ctx: &mut CalibrationContext) -> Result<()> {
     // Check if current step expects a bottom-right corner
-    if !matches!(ctx.current_step, CalibrationStep::SkipButtonRegionBottomRight) {
+    let is_bottom_right_step = matches!(
+        ctx.current_step,
+        CalibrationStep::StartButtonRegionBottomRight
+            | CalibrationStep::SkipButtonRegionBottomRight
+            | CalibrationStep::EndButtonRegionBottomRight
+    );
+
+    if !is_bottom_right_step {
         log("Current step doesn't expect bottom-right corner (F3).");
         return Ok(());
     }
@@ -312,8 +332,13 @@ fn handle_bottom_right_capture(ctx: &mut CalibrationContext) -> Result<()> {
         height,
     };
 
-    // Store the region
-    ctx.items.skip_button_region = Some(region);
+    // Store the region based on current step
+    match ctx.current_step {
+        CalibrationStep::StartButtonRegionBottomRight => ctx.items.start_button_region = Some(region),
+        CalibrationStep::SkipButtonRegionBottomRight => ctx.items.skip_button_region = Some(region),
+        CalibrationStep::EndButtonRegionBottomRight => ctx.items.end_button_region = Some(region),
+        _ => {}
+    }
     ctx.pending_top_left = None;
 
     // Show preview and ask for confirmation
@@ -338,18 +363,30 @@ fn show_step_preview(ctx: &CalibrationContext) -> Result<()> {
     if let Some(ref btn) = ctx.items.start_button {
         preview_config.start_button = btn.clone();
     }
+    if let Some(ref region) = ctx.items.start_button_region {
+        preview_config.start_button_region = region.clone();
+    }
     if let Some(ref btn) = ctx.items.skip_button {
         preview_config.skip_button = btn.clone();
     }
     if let Some(ref region) = ctx.items.skip_button_region {
         preview_config.skip_button_region = region.clone();
     }
+    if let Some(ref btn) = ctx.items.end_button {
+        preview_config.end_button = btn.clone();
+    }
+    if let Some(ref region) = ctx.items.end_button_region {
+        preview_config.end_button_region = region.clone();
+    }
 
     // Determine highlight
     let highlight = match ctx.current_step {
         CalibrationStep::StartButton => Some(HighlightedItem::StartButton),
+        CalibrationStep::StartButtonRegionBottomRight => Some(HighlightedItem::StartButtonRegion),
         CalibrationStep::SkipButton => Some(HighlightedItem::SkipButton),
         CalibrationStep::SkipButtonRegionBottomRight => Some(HighlightedItem::SkipButtonRegion),
+        CalibrationStep::EndButton => Some(HighlightedItem::EndButton),
+        CalibrationStep::EndButtonRegionBottomRight => Some(HighlightedItem::EndButtonRegion),
         _ => None,
     };
 
@@ -372,9 +409,12 @@ fn advance_to_next_step(ctx: &mut CalibrationContext) -> Result<()> {
     log("");
 
     ctx.current_step = match ctx.current_step {
-        CalibrationStep::StartButton => CalibrationStep::SkipButton,
+        CalibrationStep::StartButton => CalibrationStep::StartButtonRegionTopLeft,
+        CalibrationStep::StartButtonRegionBottomRight => CalibrationStep::SkipButton,
         CalibrationStep::SkipButton => CalibrationStep::SkipButtonRegionTopLeft,
-        CalibrationStep::SkipButtonRegionBottomRight => CalibrationStep::Complete,
+        CalibrationStep::SkipButtonRegionBottomRight => CalibrationStep::EndButton,
+        CalibrationStep::EndButton => CalibrationStep::EndButtonRegionTopLeft,
+        CalibrationStep::EndButtonRegionBottomRight => CalibrationStep::Complete,
         _ => ctx.current_step.clone(),
     };
 
@@ -392,9 +432,14 @@ fn rewind_to_step_start(step: &CalibrationStep) -> CalibrationStep {
         // Button steps stay the same
         CalibrationStep::StartButton => CalibrationStep::StartButton,
         CalibrationStep::SkipButton => CalibrationStep::SkipButton,
+        CalibrationStep::EndButton => CalibrationStep::EndButton,
         // Region steps go back to TopLeft
+        CalibrationStep::StartButtonRegionTopLeft
+        | CalibrationStep::StartButtonRegionBottomRight => CalibrationStep::StartButtonRegionTopLeft,
         CalibrationStep::SkipButtonRegionTopLeft
         | CalibrationStep::SkipButtonRegionBottomRight => CalibrationStep::SkipButtonRegionTopLeft,
+        CalibrationStep::EndButtonRegionTopLeft
+        | CalibrationStep::EndButtonRegionBottomRight => CalibrationStep::EndButtonRegionTopLeft,
         CalibrationStep::Complete => CalibrationStep::Complete,
     }
 }
@@ -403,9 +448,16 @@ fn rewind_to_step_start(step: &CalibrationStep) -> CalibrationStep {
 fn skip_current_step(ctx: &mut CalibrationContext) -> Result<()> {
     // Skip to the next "start" step (not intermediate steps like BottomRight)
     ctx.current_step = match ctx.current_step {
-        CalibrationStep::StartButton => CalibrationStep::SkipButton,
+        CalibrationStep::StartButton => CalibrationStep::StartButtonRegionTopLeft,
+        CalibrationStep::StartButtonRegionTopLeft | CalibrationStep::StartButtonRegionBottomRight => {
+            CalibrationStep::SkipButton
+        }
         CalibrationStep::SkipButton => CalibrationStep::SkipButtonRegionTopLeft,
         CalibrationStep::SkipButtonRegionTopLeft | CalibrationStep::SkipButtonRegionBottomRight => {
+            CalibrationStep::EndButton
+        }
+        CalibrationStep::EndButton => CalibrationStep::EndButtonRegionTopLeft,
+        CalibrationStep::EndButtonRegionTopLeft | CalibrationStep::EndButtonRegionBottomRight => {
             CalibrationStep::Complete
         }
         CalibrationStep::Complete => CalibrationStep::Complete,
@@ -441,6 +493,11 @@ fn print_step_instructions(step: &CalibrationStep) {
             log("Position cursor over the CENTER of the Start button (開始する).");
             log("Press F1 to record.");
         }
+        CalibrationStep::StartButtonRegionTopLeft => {
+            log("This region detects if the rehearsal page is visible.");
+            log("Position cursor at TOP-LEFT corner of the start button area.");
+            log("Press F2 to record top-left.");
+        }
         CalibrationStep::SkipButton => {
             log("Position cursor over the CENTER of the Skip button (スキップ).");
             log("Press F1 to record.");
@@ -448,6 +505,15 @@ fn print_step_instructions(step: &CalibrationStep) {
         CalibrationStep::SkipButtonRegionTopLeft => {
             log("This region detects if the skip button is visible (brightness check).");
             log("Position cursor at TOP-LEFT corner of the skip button area.");
+            log("Press F2 to record top-left.");
+        }
+        CalibrationStep::EndButton => {
+            log("Position cursor over the CENTER of the End button (終了).");
+            log("Press F1 to record.");
+        }
+        CalibrationStep::EndButtonRegionTopLeft => {
+            log("This region detects if the result page is visible.");
+            log("Position cursor at TOP-LEFT corner of the end button area.");
             log("Press F2 to record top-left.");
         }
         _ => {}
@@ -470,11 +536,20 @@ fn finish_calibration(items: CalibrationItems, game_hwnd: HWND) -> Result<()> {
     if let Some(btn) = items.start_button {
         final_config.start_button = btn;
     }
+    if let Some(region) = items.start_button_region {
+        final_config.start_button_region = region;
+    }
     if let Some(btn) = items.skip_button {
         final_config.skip_button = btn;
     }
     if let Some(region) = items.skip_button_region {
         final_config.skip_button_region = region;
+    }
+    if let Some(btn) = items.end_button {
+        final_config.end_button = btn;
+    }
+    if let Some(region) = items.end_button_region {
+        final_config.end_button_region = region;
     }
 
     // Save config

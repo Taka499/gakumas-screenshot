@@ -68,6 +68,9 @@ pub fn capture_region(hwnd: HWND, rel_rect: &RelativeRect) -> Result<ImageBuffer
     // Create capture session
     let session = frame_pool.CreateCaptureSession(&item)?;
 
+    // Disable cursor capture to exclude cursor from screenshots
+    session.SetIsCursorCaptureEnabled(false)?;
+
     // Set up frame arrival handling
     let frame_arrived = Arc::new(AtomicBool::new(false));
     let frame_arrived_clone = frame_arrived.clone();

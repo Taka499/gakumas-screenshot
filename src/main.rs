@@ -44,7 +44,9 @@ const WM_TRAYICON: u32 = WM_USER + 1;
 const MENU_CALIBRATE: usize = 1001;
 const MENU_PREVIEW: usize = 1002;
 const MENU_TEST_OCR: usize = 1004;
-const MENU_CAPTURE_SKIP_REF: usize = 1005;
+const MENU_CAPTURE_START_REF: usize = 1005;
+const MENU_CAPTURE_SKIP_REF: usize = 1006;
+const MENU_CAPTURE_END_REF: usize = 1007;
 const MENU_EXIT: usize = 1003;
 
 /// Logs a message to both console and log file with timestamp.
@@ -352,9 +354,15 @@ unsafe extern "system" fn window_proc(
                 } else if cmd == MENU_TEST_OCR {
                     log("Test OCR requested");
                     test_ocr();
+                } else if cmd == MENU_CAPTURE_START_REF {
+                    log("Capture Start Reference requested");
+                    capture_start_reference();
                 } else if cmd == MENU_CAPTURE_SKIP_REF {
                     log("Capture Skip Reference requested");
                     capture_skip_reference();
+                } else if cmd == MENU_CAPTURE_END_REF {
+                    log("Capture End Reference requested");
+                    capture_end_reference();
                 } else if cmd == MENU_EXIT {
                     log("Exit requested");
                     PostQuitMessage(0);
@@ -425,8 +433,14 @@ fn show_context_menu(hwnd: HWND) {
         let test_ocr_text = w!("Test OCR");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_TEST_OCR, test_ocr_text);
 
+        let start_ref_text = w!("Capture Start Reference");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CAPTURE_START_REF, start_ref_text);
+
         let skip_ref_text = w!("Capture Skip Reference");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CAPTURE_SKIP_REF, skip_ref_text);
+
+        let end_ref_text = w!("Capture End Reference");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CAPTURE_END_REF, end_ref_text);
 
         let calibrate_text = w!("Calibrate Regions...");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CALIBRATE, calibrate_text);
@@ -502,8 +516,44 @@ fn test_ocr() {
     }
 }
 
+/// Captures the current Start button region as a reference image for histogram comparison.
+/// The game should be showing the rehearsal start page with the "開始する" button when this is called.
+fn capture_start_reference() {
+    // Find game window
+    let game_hwnd = match capture::find_gakumas_window() {
+        Ok(hwnd) => hwnd,
+        Err(e) => {
+            log(&format!("Could not find game window: {}", e));
+            return;
+        }
+    };
+
+    let config = automation::get_config();
+
+    // Determine save path
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let ref_path = exe_dir.join(&config.start_button_reference);
+
+    // Capture and save
+    match automation::save_start_button_reference(game_hwnd, config, &ref_path) {
+        Ok(()) => {
+            log(&format!(
+                "Start button reference saved to {}",
+                ref_path.display()
+            ));
+            log("The automation will now use this image to detect when the Start button (rehearsal page) appears.");
+        }
+        Err(e) => {
+            log(&format!("Failed to capture Start reference: {}", e));
+        }
+    }
+}
+
 /// Captures the current Skip button region as a reference image for histogram comparison.
-/// The game should be showing the Skip button (dimmed or enabled) when this is called.
+/// The game should be showing the Skip button (during rehearsal) when this is called.
 fn capture_skip_reference() {
     // Find game window
     let game_hwnd = match capture::find_gakumas_window() {
@@ -534,6 +584,42 @@ fn capture_skip_reference() {
         }
         Err(e) => {
             log(&format!("Failed to capture Skip reference: {}", e));
+        }
+    }
+}
+
+/// Captures the current End button region as a reference image for histogram comparison.
+/// The game should be showing the result page with the "終了" button when this is called.
+fn capture_end_reference() {
+    // Find game window
+    let game_hwnd = match capture::find_gakumas_window() {
+        Ok(hwnd) => hwnd,
+        Err(e) => {
+            log(&format!("Could not find game window: {}", e));
+            return;
+        }
+    };
+
+    let config = automation::get_config();
+
+    // Determine save path
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let ref_path = exe_dir.join(&config.end_button_reference);
+
+    // Capture and save
+    match automation::save_end_button_reference(game_hwnd, config, &ref_path) {
+        Ok(()) => {
+            log(&format!(
+                "End button reference saved to {}",
+                ref_path.display()
+            ));
+            log("The automation will now use this image to detect when the result page appears.");
+        }
+        Err(e) => {
+            log(&format!("Failed to capture End reference: {}", e));
         }
     }
 }

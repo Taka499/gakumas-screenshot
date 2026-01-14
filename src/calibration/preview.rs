@@ -22,8 +22,11 @@ pub const COLOR_HIGHLIGHT: Rgba<u8> = Rgba([255, 128, 0, 255]); // Orange
 #[derive(Clone, Debug)]
 pub enum HighlightedItem {
     StartButton,
+    StartButtonRegion,
     SkipButton,
     SkipButtonRegion,
+    EndButton,
+    EndButtonRegion,
 }
 
 /// Renders all configured regions onto a screenshot.
@@ -49,9 +52,40 @@ pub fn render_preview(
         COLOR_BUTTON,
         15,
     );
+    draw_crosshair(
+        &mut img,
+        (config.end_button.x * width as f32) as u32,
+        (config.end_button.y * height as f32) as u32,
+        COLOR_BUTTON,
+        15,
+    );
 
-    // Draw skip button brightness region
+    // Draw start button region (for page detection)
+    let r = &config.start_button_region;
+    draw_rect(
+        &mut img,
+        (r.x * width as f32) as u32,
+        (r.y * height as f32) as u32,
+        (r.width * width as f32) as u32,
+        (r.height * height as f32) as u32,
+        COLOR_BRIGHTNESS,
+        2,
+    );
+
+    // Draw skip button region (for brightness detection)
     let r = &config.skip_button_region;
+    draw_rect(
+        &mut img,
+        (r.x * width as f32) as u32,
+        (r.y * height as f32) as u32,
+        (r.width * width as f32) as u32,
+        (r.height * height as f32) as u32,
+        COLOR_BRIGHTNESS,
+        2,
+    );
+
+    // Draw end button region (for result page detection)
+    let r = &config.end_button_region;
     draw_rect(
         &mut img,
         (r.x * width as f32) as u32,
@@ -85,6 +119,18 @@ pub fn render_preview_with_highlight(
                 20,
             );
         }
+        HighlightedItem::StartButtonRegion => {
+            let r = &config.start_button_region;
+            draw_rect(
+                &mut img,
+                (r.x * width as f32) as u32,
+                (r.y * height as f32) as u32,
+                (r.width * width as f32) as u32,
+                (r.height * height as f32) as u32,
+                COLOR_HIGHLIGHT,
+                4,
+            );
+        }
         HighlightedItem::SkipButton => {
             draw_crosshair(
                 &mut img,
@@ -96,6 +142,27 @@ pub fn render_preview_with_highlight(
         }
         HighlightedItem::SkipButtonRegion => {
             let r = &config.skip_button_region;
+            draw_rect(
+                &mut img,
+                (r.x * width as f32) as u32,
+                (r.y * height as f32) as u32,
+                (r.width * width as f32) as u32,
+                (r.height * height as f32) as u32,
+                COLOR_HIGHLIGHT,
+                4,
+            );
+        }
+        HighlightedItem::EndButton => {
+            draw_crosshair(
+                &mut img,
+                (config.end_button.x * width as f32) as u32,
+                (config.end_button.y * height as f32) as u32,
+                COLOR_HIGHLIGHT,
+                20,
+            );
+        }
+        HighlightedItem::EndButtonRegion => {
+            let r = &config.end_button_region;
             draw_rect(
                 &mut img,
                 (r.x * width as f32) as u32,

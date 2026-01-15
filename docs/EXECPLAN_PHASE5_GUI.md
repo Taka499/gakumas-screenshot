@@ -53,6 +53,14 @@ The application still runs as a system tray application, but the tray menu is si
   Evidence: All Japanese text displayed as boxes (□)
   Resolution: Load Windows system font (Yu Gothic/Meiryo/MS Gothic) at startup via `ctx.set_fonts()`
 
+- Observation: Tesseract OCR spawned visible console windows during processing
+  Evidence: Brief terminal window flash every time OCR ran on Windows
+  Resolution: Added CREATE_NO_WINDOW flag (0x08000000) to Command::new() via creation_flags()
+
+- Observation: Tesseract failed to create TSV output with "Can't open tsv" error
+  Evidence: prepare-tesseract.ps1 only copied eng.traineddata, not tessdata/configs/tsv
+  Resolution: Changed from .arg("tsv") config file to .arg("-c").arg("tessedit_create_tsv=1") flag
+
 
 ## Decision Log
 
@@ -91,7 +99,33 @@ The application still runs as a system tray application, but the tray menu is si
 
 ## Outcomes & Retrospective
 
-(To be updated after implementation)
+### What Went Well
+- egui/eframe provided a clean, simple GUI with minimal code
+- Three-column layout works well for the portrait guide images + controls
+- Session-based output folders prevent data loss between runs
+- Auto-chart generation on completion improves user experience
+- Tray icon integration allows hotkeys to remain active when window is closed
+
+### What Was Challenging
+- COM initialization conflicts required disabling drag-and-drop
+- Hotkey handling required a separate background thread with message-only window
+- The embedded Tesseract package was missing config files, causing silent OCR failures
+- Windows console window flashing required platform-specific Command flags
+
+### Lessons Learned
+- When bundling external tools, verify all required config files are included
+- Test OCR end-to-end early to catch integration issues
+- Windows GUI apps need explicit flags to prevent console window appearance
+- egui's immediate mode makes state management simple but requires explicit repaint requests
+
+### Final State
+Phase 5 is complete. The application now has a fully functional GUI with:
+- Visual guide images with step-by-step instructions
+- Iteration count input and Start/Stop controls
+- Real-time progress bar and status display
+- Session-based output with auto-generated charts
+- Tray icon with hotkey support (Ctrl+Shift+S screenshot, Ctrl+Shift+Q abort)
+- Developer mode toggle via config file
 
 
 ## Context and Orientation

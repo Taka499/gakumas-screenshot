@@ -4,6 +4,7 @@
 //! Spawns threads, runs the state machine, and handles completion.
 
 use anyhow::{anyhow, Result};
+use chrono::Local;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -29,11 +30,11 @@ static TOTAL_ITERATIONS: AtomicU32 = AtomicU32::new(0);
 /// Current state description (for GUI progress display).
 static CURRENT_STATE_DESC: Mutex<String> = Mutex::new(String::new());
 
+/// Current session folder path (for GUI to access after completion).
+static CURRENT_SESSION_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 /// Default number of iterations if not specified in config.
 const DEFAULT_ITERATIONS: u32 = 10;
-
-/// Default CSV file path.
-const DEFAULT_CSV_PATH: &str = "results.csv";
 
 /// Checks if automation is currently running.
 pub fn is_automation_running() -> bool {
@@ -62,6 +63,21 @@ pub fn get_current_state_description() -> String {
 fn update_state_description(desc: &str) {
     if let Ok(mut s) = CURRENT_STATE_DESC.lock() {
         *s = desc.to_string();
+    }
+}
+
+/// Gets the current session folder path (for GUI to access).
+pub fn get_current_session_path() -> Option<PathBuf> {
+    CURRENT_SESSION_PATH
+        .lock()
+        .ok()
+        .and_then(|p| p.clone())
+}
+
+/// Sets the current session folder path (called at automation start).
+fn set_current_session_path(path: PathBuf) {
+    if let Ok(mut p) = CURRENT_SESSION_PATH.lock() {
+        *p = Some(path);
     }
 }
 
@@ -98,9 +114,22 @@ pub fn start_automation(max_iterations: Option<u32>) -> Result<()> {
     let config = get_config().clone();
     let iterations = max_iterations.unwrap_or(DEFAULT_ITERATIONS);
 
-    // Setup paths (use centralized paths module)
-    let screenshot_dir = crate::paths::get_screenshots_dir();
-    let csv_path = crate::paths::get_exe_dir().join(DEFAULT_CSV_PATH);
+    // Create timestamped session folder: output/YYYYMMDD_HHMMSS/
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let session_dir = crate::paths::get_output_dir().join(&timestamp);
+
+    // Create session directory structure
+    if let Err(e) = fs::create_dir_all(&session_dir) {
+        AUTOMATION_RUNNING.store(false, Ordering::SeqCst);
+        return Err(anyhow!("Failed to create session directory: {}", e));
+    }
+
+    // Store session path for GUI access
+    set_current_session_path(session_dir.clone());
+
+    // Setup paths within session folder
+    let screenshot_dir = session_dir.join("screenshots");
+    let csv_path = session_dir.join("results.csv");
 
     // Create screenshot directory if needed
     if let Err(e) = fs::create_dir_all(&screenshot_dir) {
@@ -123,6 +152,7 @@ pub fn start_automation(max_iterations: Option<u32>) -> Result<()> {
         "Starting automation: {} iterations (Ctrl+Shift+Q to abort)",
         iterations
     ));
+    crate::log(&format!("Session folder: {}", session_dir.display()));
     crate::log(&format!("Screenshots: {}", screenshot_dir.display()));
     crate::log(&format!("Results CSV: {}", csv_path.display()));
 

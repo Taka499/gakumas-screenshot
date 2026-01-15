@@ -21,7 +21,7 @@ The application still runs as a system tray application, but the tray menu is si
 - [x] (2026-01-15 14:15) Milestone 3: Implement instruction panel with guide images - Placeholder images embedded, render_instructions() implemented
 - [x] (2026-01-15 14:20) Milestone 4: Implement iteration input and control buttons - DragValue, Start/Stop buttons with enable/disable logic
 - [x] (2026-01-15 14:25) Milestone 5: Implement progress display - Progress bar, status text, elapsed time, added runner progress tracking
-- [ ] Milestone 6: Implement session-based output folders - Pending
+- [x] (2026-01-16 12:00) Milestone 6: Implement session-based output folders - Session folders with timestamps, auto-chart generation on completion
 - [x] (2026-01-15 14:30) Milestone 7: Simplify tray menu and integrate GUI - GUI launches by default, tray app available in developer mode
 - [x] (2026-01-15 14:35) Milestone 8: Implement developer mode toggle - Added developer_mode field to config, main() checks config flag
 - [x] (2026-01-16 00:10) Milestone 9: End-to-end testing - Fixed COM conflict, added Japanese font support, verified automation works

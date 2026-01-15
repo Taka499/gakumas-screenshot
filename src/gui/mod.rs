@@ -197,13 +197,29 @@ impl GuiApp {
         match &self.state.status {
             AutomationStatus::Running { total, start_time, .. } => {
                 if !is_running {
-                    // Automation finished
+                    // Automation finished - get session path from runner
+                    let session_path = crate::automation::runner::get_current_session_path()
+                        .unwrap_or_else(|| crate::paths::get_output_dir());
+                    self.state.latest_session_path = Some(session_path.clone());
+
                     if is_aborted {
                         self.state.status = AutomationStatus::Aborted;
                     } else {
-                        // Get the session path from the latest output
-                        let session_path = self.state.latest_session_path.clone()
-                            .unwrap_or_else(|| crate::paths::get_output_dir());
+                        // Auto-generate charts on successful completion
+                        crate::log("GUI: Auto-generating charts...");
+                        match crate::analysis::generate_analysis_for_session(&session_path) {
+                            Ok((chart_paths, json_path)) => {
+                                crate::log(&format!(
+                                    "GUI: Charts generated: {} files, stats: {}",
+                                    chart_paths.len(),
+                                    json_path.display()
+                                ));
+                            }
+                            Err(e) => {
+                                crate::log(&format!("GUI: Failed to generate charts: {}", e));
+                            }
+                        }
+
                         self.state.status = AutomationStatus::Completed {
                             total: *total,
                             session_path,
@@ -211,7 +227,6 @@ impl GuiApp {
                     }
                 } else {
                     // Still running - update progress
-                    // TODO: Get actual progress from runner
                     let current = crate::automation::runner::get_current_iteration();
                     let state_desc = crate::automation::runner::get_current_state_description();
                     self.state.status = AutomationStatus::Running {
@@ -241,16 +256,12 @@ impl GuiApp {
     fn handle_start(&mut self) {
         let iterations = self.state.iterations;
 
-        // Create session folder with timestamp
-        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-        let session_path = crate::paths::get_output_dir().join(&timestamp);
-
-        // Store session path for later
-        self.state.latest_session_path = Some(session_path.clone());
-
-        // Start automation
+        // Start automation (runner creates session folder internally)
         match start_automation(Some(iterations)) {
             Ok(()) => {
+                // Get session path from runner
+                self.state.latest_session_path = crate::automation::runner::get_current_session_path();
+
                 self.state.status = AutomationStatus::Running {
                     current: 0,
                     total: iterations,

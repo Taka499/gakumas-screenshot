@@ -35,7 +35,15 @@ The application still runs as a system tray application, but the tray menu is si
 
 - Observation: The tray-icon crate was added but not yet integrated with the GUI
   Evidence: GUI runs standalone without tray icon
-  Resolution: Future enhancement - can add tray icon support within egui context later
+  Resolution: Integrated tray-icon with GUI mode using background message-only window for menu events
+
+- Observation: Console window appeared alongside GUI window
+  Evidence: Windows subsystem defaulted to console
+  Resolution: Added `#![windows_subsystem = "windows"]` to hide console in GUI mode
+
+- Observation: Global hotkeys (Ctrl+Shift+S, Ctrl+Shift+Q) didn't work in GUI mode
+  Evidence: Hotkeys were only registered in developer/tray app mode
+  Resolution: Created background thread with message-only window to handle hotkeys via RegisterHotKey API
 
 - Observation: COM initialization conflict between Windows Graphics Capture API and eframe/winit
   Evidence: Panic "OleInitialize failed! Result was: RPC_E_CHANGED_MODE" - RoInitialize(multithreaded) conflicts with winit's OleInitialize (single-threaded) for drag-and-drop
@@ -75,6 +83,10 @@ The application still runs as a system tray application, but the tray menu is si
 - Decision: Dual-mode startup (GUI vs Tray) based on developer_mode config
   Rationale: eframe's event loop is incompatible with the existing Windows message loop. Rather than complex thread integration, we use conditional startup: normal users get the GUI, developers get the tray app with all features. This is simpler and maintains both interfaces.
   Date/Author: 2026-01-15 / Implementation
+
+- Decision: Three-column layout for GUI
+  Rationale: Guide images are portrait orientation (from mobile game). Two-column layout caused second image to overflow below first. Three columns (image1, image2, controls) allows all content to be visible without scrolling at default window size (800x580).
+  Date/Author: 2026-01-16 / Implementation
 
 
 ## Outcomes & Retrospective

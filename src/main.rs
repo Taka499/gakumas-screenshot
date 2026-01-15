@@ -3,6 +3,9 @@
 //! A Windows system tray application that captures screenshots of the
 //! gakumas.exe game window using the Windows Graphics Capture API.
 
+// Hide console window on Windows for GUI mode
+#![windows_subsystem = "windows"]
+
 mod analysis;
 mod automation;
 mod calibration;

@@ -5,18 +5,33 @@
 pub mod render;
 pub mod state;
 
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui::{self, TextureHandle, Vec2};
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem},
+    TrayIcon, TrayIconBuilder,
+};
 
 use crate::automation::runner::{is_automation_running, start_automation};
 use crate::automation::state::{request_abort, ABORT_REQUESTED};
 
 use state::{AutomationStatus, GuiState};
 
-/// Embedded guide images (placeholders - will be replaced with actual screenshots).
+/// Menu item IDs for tray menu
+const MENU_SHOW_WINDOW: &str = "show_window";
+const MENU_EXIT: &str = "exit";
+
+/// Hotkey IDs
+const HOTKEY_SCREENSHOT: i32 = 101;
+const HOTKEY_ABORT: i32 = 102;
+
+/// Global hotkey event signal (set by hotkey thread, read by GUI thread)
+static HOTKEY_TRIGGERED: AtomicI32 = AtomicI32::new(0);
+
+/// Embedded guide images (TODO: need to udpate the build to copy the file to release, just like template iamges).
 const GUIDE_IMAGE_1: &[u8] = include_bytes!("../../resources/guide/step1_contest_mode.png");
 const GUIDE_IMAGE_2: &[u8] = include_bytes!("../../resources/guide/step2_rehearsal_page.png");
 
@@ -28,6 +43,13 @@ pub struct GuiApp {
     guide_images: [Option<TextureHandle>; 2],
     /// Flag to track if images have been loaded.
     images_loaded: bool,
+    /// Tray icon (kept alive for the duration of the app).
+    #[allow(dead_code)]
+    tray_icon: Option<TrayIcon>,
+    /// Menu event receiver for tray menu (uses crossbeam-channel from tray-icon).
+    menu_event_receiver: Option<tray_icon::menu::MenuEventReceiver>,
+    /// Flag to request exit from tray menu.
+    exit_requested: bool,
 }
 
 impl GuiApp {
@@ -36,11 +58,53 @@ impl GuiApp {
         // Configure fonts to support Japanese
         Self::setup_fonts(&cc.egui_ctx);
 
+        // Set up tray icon
+        let (tray_icon, menu_event_receiver) = Self::setup_tray_icon();
+
         Self {
             state: GuiState::default(),
             guide_images: [None, None],
             images_loaded: false,
+            tray_icon,
+            menu_event_receiver,
+            exit_requested: false,
         }
+    }
+
+    /// Set up the system tray icon with menu.
+    fn setup_tray_icon() -> (Option<TrayIcon>, Option<tray_icon::menu::MenuEventReceiver>) {
+        // Create menu
+        let menu = Menu::new();
+        let show_item = MenuItem::with_id(MENU_SHOW_WINDOW, "ウィンドウを表示", true, None);
+        let exit_item = MenuItem::with_id(MENU_EXIT, "終了", true, None);
+
+        if let Err(e) = menu.append(&show_item) {
+            crate::log(&format!("Failed to add show menu item: {}", e));
+        }
+        if let Err(e) = menu.append(&exit_item) {
+            crate::log(&format!("Failed to add exit menu item: {}", e));
+        }
+
+        // Create tray icon with default Windows icon
+        let tray_icon = match TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("Gakumas Rehearsal Automation")
+            .build()
+        {
+            Ok(icon) => {
+                crate::log("Tray icon created successfully");
+                Some(icon)
+            }
+            Err(e) => {
+                crate::log(&format!("Failed to create tray icon: {}", e));
+                None
+            }
+        };
+
+        // Get the menu event receiver
+        let menu_event_receiver = Some(MenuEvent::receiver().clone());
+
+        (tray_icon, menu_event_receiver)
     }
 
     /// Setup fonts with Japanese support.
@@ -242,6 +306,18 @@ impl GuiApp {
 
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle tray menu events
+        self.handle_tray_events(ctx);
+
+        // Handle global hotkey events
+        self.handle_hotkey_events();
+
+        // Check if exit was requested from tray menu
+        if self.exit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
         // Load images on first frame
         self.load_images(ctx);
 
@@ -256,37 +332,97 @@ impl eframe::App for GuiApp {
         // Main panel
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("学マス リハーサル統計自動化ツール");
-            ui.add_space(16.0);
+            ui.add_space(8.0);
 
-            // Scrollable content
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                // Instructions section
-                render::render_instructions(ui, &self.guide_images);
+            // Three-column layout: image1, image2, controls
+            ui.columns(3, |columns| {
+                // Column 1: First guide image
+                columns[0].vertical(|ui| {
+                    render::render_guide_image(ui, &self.guide_images[0], "① コンテストで「リハーサル」を選択");
+                });
 
-                // Controls section (iteration input, start/stop buttons)
-                let (start_clicked, stop_clicked) = render::render_controls(ui, &mut self.state);
+                // Column 2: Second guide image
+                columns[1].vertical(|ui| {
+                    render::render_guide_image(ui, &self.guide_images[1], "② この画面で待機");
+                });
 
-                if start_clicked {
-                    self.handle_start();
-                }
-                if stop_clicked {
-                    self.handle_stop();
-                }
+                // Column 3: Controls, progress, actions
+                columns[2].vertical(|ui| {
+                    // Controls section (iteration input, start/stop buttons)
+                    let (start_clicked, stop_clicked) = render::render_controls(ui, &mut self.state);
 
-                // Progress section
-                render::render_progress(ui, &self.state);
+                    if start_clicked {
+                        self.handle_start();
+                    }
+                    if stop_clicked {
+                        self.handle_stop();
+                    }
 
-                // Action buttons section
-                let (generate_clicked, open_folder_clicked) = render::render_actions(ui, &self.state);
+                    // Progress section
+                    render::render_progress(ui, &self.state);
 
-                if generate_clicked {
-                    self.handle_generate_charts();
-                }
-                if open_folder_clicked {
-                    self.handle_open_folder();
-                }
+                    // Action buttons section
+                    let (generate_clicked, open_folder_clicked) = render::render_actions(ui, &self.state);
+
+                    if generate_clicked {
+                        self.handle_generate_charts();
+                    }
+                    if open_folder_clicked {
+                        self.handle_open_folder();
+                    }
+                });
             });
         });
+    }
+}
+
+impl GuiApp {
+    /// Handle tray icon menu events.
+    fn handle_tray_events(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.menu_event_receiver {
+            // Non-blocking check for menu events
+            while let Ok(event) = receiver.try_recv() {
+                match event.id.0.as_str() {
+                    MENU_SHOW_WINDOW => {
+                        // Bring window to front
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        crate::log("Tray: Show window requested");
+                    }
+                    MENU_EXIT => {
+                        crate::log("Tray: Exit requested");
+                        self.exit_requested = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Handle global hotkey events.
+    fn handle_hotkey_events(&mut self) {
+        let hotkey_id = HOTKEY_TRIGGERED.swap(0, Ordering::SeqCst);
+        if hotkey_id == 0 {
+            return;
+        }
+
+        match hotkey_id {
+            HOTKEY_SCREENSHOT => {
+                crate::log("Hotkey: Screenshot (Ctrl+Shift+S)");
+                match crate::capture::capture_gakumas() {
+                    Ok(path) => crate::log(&format!("Screenshot saved: {}", path.display())),
+                    Err(e) => crate::log(&format!("Screenshot failed: {}", e)),
+                }
+            }
+            HOTKEY_ABORT => {
+                if is_automation_running() {
+                    crate::log("Hotkey: Abort (Ctrl+Shift+Q)");
+                    request_abort();
+                } else {
+                    crate::log("Hotkey: Abort pressed but no automation running");
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -295,10 +431,17 @@ impl eframe::App for GuiApp {
 pub fn run_gui() -> eframe::Result<()> {
     crate::log("GUI: Creating native options...");
 
+    // Start hotkey handler thread
+    let hotkey_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let hotkey_running_clone = hotkey_running.clone();
+    let hotkey_thread = std::thread::spawn(move || {
+        run_hotkey_thread(hotkey_running_clone);
+    });
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size(Vec2::new(600.0, 500.0))
-            .with_min_inner_size(Vec2::new(400.0, 400.0))
+            .with_inner_size(Vec2::new(800.0, 580.0))
+            .with_min_inner_size(Vec2::new(600.0, 450.0))
             .with_title("Gakumas Rehearsal Automation")
             // Disable drag-and-drop to avoid COM conflict with RoInitialize (multithreaded)
             .with_drag_and_drop(false),
@@ -307,12 +450,122 @@ pub fn run_gui() -> eframe::Result<()> {
 
     crate::log("GUI: Calling eframe::run_native...");
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "Gakumas Rehearsal Automation",
         options,
         Box::new(|cc| {
             crate::log("GUI: Creating GuiApp instance...");
             Ok(Box::new(GuiApp::new(cc)))
         }),
-    )
+    );
+
+    // Stop hotkey thread
+    hotkey_running.store(false, Ordering::SeqCst);
+    let _ = hotkey_thread.join();
+
+    result
+}
+
+/// Run the hotkey handler in a background thread.
+fn run_hotkey_thread(running: Arc<std::sync::atomic::AtomicBool>) {
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        RegisterHotKey, UnregisterHotKey, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PeekMessageW,
+        RegisterClassW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, HWND_MESSAGE, MSG, PM_REMOVE,
+        WM_HOTKEY, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    };
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::core::w;
+
+    unsafe {
+        let hinstance = match GetModuleHandleW(None) {
+            Ok(h) => h,
+            Err(e) => {
+                crate::log(&format!("Hotkey thread: Failed to get module handle: {}", e));
+                return;
+            }
+        };
+
+        let class_name = w!("GakumasHotkeyClass");
+        let wc = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(hotkey_window_proc),
+            hInstance: hinstance.into(),
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+
+        if RegisterClassW(&wc) == 0 {
+            crate::log("Hotkey thread: Failed to register window class");
+            return;
+        }
+
+        // Create message-only window
+        let hwnd = match CreateWindowExW(
+            Default::default(),
+            class_name,
+            w!("Hotkey Window"),
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+            HWND_MESSAGE, // Message-only window
+            None,
+            hinstance,
+            None,
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                crate::log(&format!("Hotkey thread: Failed to create window: {}", e));
+                return;
+            }
+        };
+
+        // Register hotkeys
+        // Ctrl+Shift+S for screenshot
+        if let Err(e) = RegisterHotKey(hwnd, HOTKEY_SCREENSHOT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x53) {
+            crate::log(&format!("Hotkey thread: Failed to register screenshot hotkey: {}", e));
+        } else {
+            crate::log("Hotkey: Ctrl+Shift+S registered (screenshot)");
+        }
+
+        // Ctrl+Shift+Q for abort
+        if let Err(e) = RegisterHotKey(hwnd, HOTKEY_ABORT, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x51) {
+            crate::log(&format!("Hotkey thread: Failed to register abort hotkey: {}", e));
+        } else {
+            crate::log("Hotkey: Ctrl+Shift+Q registered (abort)");
+        }
+
+        // Message loop
+        let mut msg = MSG::default();
+        while running.load(Ordering::SeqCst) {
+            // Use PeekMessage with timeout to allow checking running flag
+            if PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+                if msg.message == WM_HOTKEY {
+                    let hotkey_id = msg.wParam.0 as i32;
+                    HOTKEY_TRIGGERED.store(hotkey_id, Ordering::SeqCst);
+                }
+                let _ = DispatchMessageW(&msg);
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+
+        // Cleanup
+        let _ = UnregisterHotKey(hwnd, HOTKEY_SCREENSHOT);
+        let _ = UnregisterHotKey(hwnd, HOTKEY_ABORT);
+        crate::log("Hotkey thread: Cleaned up");
+    }
+}
+
+/// Window procedure for hotkey message-only window.
+unsafe extern "system" fn hotkey_window_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::DefWindowProcW;
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }

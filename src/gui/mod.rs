@@ -348,6 +348,10 @@ impl eframe::App for GuiApp {
 
                 // Column 3: Controls, progress, actions
                 columns[2].vertical(|ui| {
+                    // Guide text at top of column
+                    ui.label(egui::RichText::new("③ 回数を設定して開始").strong());
+                    ui.add_space(8.0);
+
                     // Controls section (iteration input, start/stop buttons)
                     let (start_clicked, stop_clicked) = render::render_controls(ui, &mut self.state);
 

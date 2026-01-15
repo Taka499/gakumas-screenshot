@@ -6,12 +6,16 @@ use eframe::egui::{self, Color32, RichText, TextureHandle, Vec2};
 
 use super::state::{AutomationStatus, GuiState};
 
-/// Render a single guide image with label.
+/// Render a single guide image with label above.
 pub fn render_guide_image(
     ui: &mut egui::Ui,
     texture: &Option<TextureHandle>,
     label: &str,
 ) {
+    // Label above the image
+    ui.label(RichText::new(label).strong());
+    ui.add_space(4.0);
+
     let available_width = ui.available_width() - 8.0; // Leave some margin
 
     if let Some(tex) = texture {
@@ -36,8 +40,6 @@ pub fn render_guide_image(
             Color32::from_gray(100),
         );
     }
-    ui.add_space(4.0);
-    ui.label(RichText::new(label).strong());
 }
 
 /// Render the iteration input and control buttons.

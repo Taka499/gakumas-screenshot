@@ -4,6 +4,9 @@
 //! by monitoring screen regions using:
 //! - Histogram comparison: Detect when Skip button appears (matches reference image)
 //! - Brightness analysis: Detect when Skip button becomes enabled (not dimmed)
+//!
+//! The histogram comparison is resolution-independent: captured regions are resized
+//! to match the reference image dimensions before comparison.
 
 use anyhow::{anyhow, Result};
 use image::{ImageBuffer, Rgba};
@@ -79,12 +82,43 @@ fn histogram_similarity(hist1: &[f32; 256], hist2: &[f32; 256]) -> f32 {
     bc
 }
 
-/// Loads a reference image from disk and calculates its histogram.
-pub fn load_reference_histogram(path: &Path) -> Result<[f32; 256]> {
+/// Reference image data including histogram and dimensions for resolution-independent matching.
+pub struct ReferenceImage {
+    /// Normalized grayscale histogram (256 bins)
+    pub histogram: [f32; 256],
+    /// Original image dimensions (width, height)
+    pub dimensions: (u32, u32),
+}
+
+/// Loads a reference image from disk and returns its histogram and dimensions.
+///
+/// The dimensions are stored so captured regions can be resized to match,
+/// enabling resolution-independent histogram comparison.
+pub fn load_reference_histogram(path: &Path) -> Result<ReferenceImage> {
     let img = image::open(path)
         .map_err(|e| anyhow!("Failed to load reference image {}: {}", path.display(), e))?
         .to_rgba8();
-    Ok(calculate_histogram(&img))
+    let dimensions = (img.width(), img.height());
+    Ok(ReferenceImage {
+        histogram: calculate_histogram(&img),
+        dimensions,
+    })
+}
+
+/// Resizes an image to target dimensions for resolution-independent comparison.
+fn resize_to_match(img: &ImageBuffer<Rgba<u8>, Vec<u8>>, target_width: u32, target_height: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    if img.width() == target_width && img.height() == target_height {
+        return img.clone();
+    }
+
+    // Use image crate's resize with triangle (bilinear) filter for speed
+    let resized = image::imageops::resize(
+        img,
+        target_width,
+        target_height,
+        image::imageops::FilterType::Triangle,
+    );
+    resized
 }
 
 /// Saves the current start button region as a reference image.
@@ -127,14 +161,16 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     // Try to load reference histogram
     let ref_path = crate::paths::get_exe_dir().join(&config.skip_button_reference);
 
-    let reference_histogram = if ref_path.exists() {
+    let reference = if ref_path.exists() {
         match load_reference_histogram(&ref_path) {
-            Ok(hist) => {
+            Ok(ref_img) => {
                 crate::log(&format!(
-                    "Loaded Skip button reference from {}",
-                    ref_path.display()
+                    "Loaded Skip button reference from {} ({}x{})",
+                    ref_path.display(),
+                    ref_img.dimensions.0,
+                    ref_img.dimensions.1
                 ));
-                Some(hist)
+                Some(ref_img)
             }
             Err(e) => {
                 crate::log(&format!(
@@ -154,7 +190,7 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     };
 
     // Phase 1: Wait for Skip button to appear (if reference exists)
-    if let Some(ref ref_hist) = reference_histogram {
+    if let Some(ref ref_img) = reference {
         crate::log("Phase 1: Waiting for Skip button to appear...");
         loop {
             if ABORT_REQUESTED.load(Ordering::SeqCst) {
@@ -169,8 +205,10 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
             }
 
             let region_img = capture_region(hwnd, &config.skip_button_region)?;
-            let current_hist = calculate_histogram(&region_img);
-            let similarity = histogram_similarity(ref_hist, &current_hist);
+            // Resize to match reference dimensions for resolution-independent comparison
+            let resized = resize_to_match(&region_img, ref_img.dimensions.0, ref_img.dimensions.1);
+            let current_hist = calculate_histogram(&resized);
+            let similarity = histogram_similarity(&ref_img.histogram, &current_hist);
 
             crate::log(&format!(
                 "Phase 1: similarity = {:.3} (threshold = {:.3})",
@@ -239,14 +277,16 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     // Try to load reference histogram
     let ref_path = crate::paths::get_exe_dir().join(&config.end_button_reference);
 
-    let reference_histogram = if ref_path.exists() {
+    let reference = if ref_path.exists() {
         match load_reference_histogram(&ref_path) {
-            Ok(hist) => {
+            Ok(ref_img) => {
                 crate::log(&format!(
-                    "Loaded End button reference from {}",
-                    ref_path.display()
+                    "Loaded End button reference from {} ({}x{})",
+                    ref_path.display(),
+                    ref_img.dimensions.0,
+                    ref_img.dimensions.1
                 ));
-                Some(hist)
+                Some(ref_img)
             }
             Err(e) => {
                 crate::log(&format!(
@@ -266,7 +306,7 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     };
 
     // If no reference, use fixed delay fallback
-    if reference_histogram.is_none() {
+    if reference.is_none() {
         crate::log(&format!(
             "Waiting {} ms for result page (no reference image)...",
             config.capture_delay_ms
@@ -275,7 +315,7 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
         return Ok(());
     }
 
-    let ref_hist = reference_histogram.unwrap();
+    let ref_img = reference.unwrap();
 
     // Wait for End button to appear (histogram comparison)
     crate::log("Waiting for End button to appear (result page)...");
@@ -292,8 +332,10 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
         }
 
         let region_img = capture_region(hwnd, &config.end_button_region)?;
-        let current_hist = calculate_histogram(&region_img);
-        let similarity = histogram_similarity(&ref_hist, &current_hist);
+        // Resize to match reference dimensions for resolution-independent comparison
+        let resized = resize_to_match(&region_img, ref_img.dimensions.0, ref_img.dimensions.1);
+        let current_hist = calculate_histogram(&resized);
+        let similarity = histogram_similarity(&ref_img.histogram, &current_hist);
 
         crate::log(&format!(
             "Result page detection: similarity = {:.3} (threshold = {:.3})",
@@ -322,14 +364,16 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
     // Try to load reference histogram
     let ref_path = crate::paths::get_exe_dir().join(&config.start_button_reference);
 
-    let reference_histogram = if ref_path.exists() {
+    let reference = if ref_path.exists() {
         match load_reference_histogram(&ref_path) {
-            Ok(hist) => {
+            Ok(ref_img) => {
                 crate::log(&format!(
-                    "Loaded Start button reference from {}",
-                    ref_path.display()
+                    "Loaded Start button reference from {} ({}x{})",
+                    ref_path.display(),
+                    ref_img.dimensions.0,
+                    ref_img.dimensions.1
                 ));
-                Some(hist)
+                Some(ref_img)
             }
             Err(e) => {
                 crate::log(&format!(
@@ -349,11 +393,11 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
     };
 
     // If no reference, skip detection (assume we're on the right page)
-    if reference_histogram.is_none() {
+    if reference.is_none() {
         return Ok(());
     }
 
-    let ref_hist = reference_histogram.unwrap();
+    let ref_img = reference.unwrap();
 
     // Wait for Start button to appear (histogram comparison)
     crate::log("Waiting for Start button to appear (rehearsal page)...");
@@ -370,8 +414,10 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
         }
 
         let region_img = capture_region(hwnd, &config.start_button_region)?;
-        let current_hist = calculate_histogram(&region_img);
-        let similarity = histogram_similarity(&ref_hist, &current_hist);
+        // Resize to match reference dimensions for resolution-independent comparison
+        let resized = resize_to_match(&region_img, ref_img.dimensions.0, ref_img.dimensions.1);
+        let current_hist = calculate_histogram(&resized);
+        let similarity = histogram_similarity(&ref_img.histogram, &current_hist);
 
         crate::log(&format!(
             "Rehearsal page detection: similarity = {:.3} (threshold = {:.3})",

@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.5 |
+| Version | 1.6 |
 | Created | 2026-01-12 |
-| Status | Phase 3 Complete |
+| Status | Phase 4 Complete |
 | Target | Complete automation of rehearsal → screenshot → OCR → statistics pipeline |
 
 ---
@@ -1912,3 +1912,4 @@ gakumas-screenshot/
 | 1.3 | 2026-01-13 | Phase 1 complete: config system, relative coords, region capture, brightness detection |
 | 1.4 | 2026-01-14 | Phase 2 complete: OCR module using full-image pattern matching with Tesseract CLI |
 | 1.5 | 2026-01-15 | Phase 3 complete: automation loop with state machine, histogram-based page detection, 9-step calibration, cursor exclusion, background OCR, CSV output |
+| 1.6 | 2026-01-15 | Phase 4 complete: statistics calculation, per-character charts (box plot + histogram), statistics table, JSON export |

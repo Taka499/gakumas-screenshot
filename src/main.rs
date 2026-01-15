@@ -3,6 +3,7 @@
 //! A Windows system tray application that captures screenshots of the
 //! gakumas.exe game window using the Windows Graphics Capture API.
 
+mod analysis;
 mod automation;
 mod calibration;
 mod capture;
@@ -48,6 +49,7 @@ const MENU_TEST_OCR: usize = 1004;
 const MENU_CAPTURE_START_REF: usize = 1005;
 const MENU_CAPTURE_SKIP_REF: usize = 1006;
 const MENU_CAPTURE_END_REF: usize = 1007;
+const MENU_GENERATE_CHARTS: usize = 1008;
 const MENU_EXIT: usize = 1003;
 
 /// Logs a message to both console and log file with timestamp.
@@ -374,6 +376,9 @@ unsafe extern "system" fn window_proc(
                 } else if cmd == MENU_CAPTURE_END_REF {
                     log("Capture End Reference requested");
                     capture_end_reference();
+                } else if cmd == MENU_GENERATE_CHARTS {
+                    log("Generate Charts requested");
+                    generate_charts();
                 } else if cmd == MENU_EXIT {
                     log("Exit requested");
                     PostQuitMessage(0);
@@ -455,6 +460,12 @@ fn show_context_menu(hwnd: HWND) {
 
         let calibrate_text = w!("Calibrate Regions...");
         let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_CALIBRATE, calibrate_text);
+
+        // Separator before analysis
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_SEPARATOR, 0, None);
+
+        let generate_charts_text = w!("Generate Charts");
+        let _ = InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, MENU_GENERATE_CHARTS, generate_charts_text);
 
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
@@ -619,6 +630,22 @@ fn capture_end_reference() {
         }
         Err(e) => {
             log(&format!("Failed to capture End reference: {}", e));
+        }
+    }
+}
+
+/// Generates statistics charts from the results CSV file.
+fn generate_charts() {
+    match analysis::generate_analysis() {
+        Ok((chart_paths, json_path)) => {
+            log("Charts generated successfully!");
+            for path in &chart_paths {
+                log(&format!("  Chart: {}", path.display()));
+            }
+            log(&format!("  Statistics: {}", json_path.display()));
+        }
+        Err(e) => {
+            log(&format!("Failed to generate charts: {}", e));
         }
     }
 }

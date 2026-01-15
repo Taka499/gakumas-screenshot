@@ -38,6 +38,9 @@ regex = "1.10"
 zip = "2.2"
 tempfile = "3.14"
 
+# Statistics & Charts (Phase 4)
+plotters = "0.3"
+
 [build-dependencies]
 embed-resource = "3"
 

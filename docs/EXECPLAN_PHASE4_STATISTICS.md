@@ -5,13 +5,14 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 ## Purpose / Big Picture
 
-After this change, the user can generate statistical analysis and visual charts from their rehearsal data by selecting a tray menu option. The application reads the CSV file produced by automation (Phase 3), calculates statistics for each of the 9 score columns (mean, median, min, max, standard deviation, quartiles), and generates two types of charts: a bar chart showing average scores and a box plot showing score distribution. Charts are saved as PNG files in the same directory as the CSV.
+After this change, the user can generate statistical analysis and visual charts from their rehearsal data by selecting a tray menu option. The application reads the CSV file produced by automation (Phase 3), calculates statistics for each of the 9 score columns (mean, median, min, max, standard deviation, quartiles), and generates per-column charts with box plots and histograms, plus a combined box plot showing all columns. Charts are saved as PNG files in an `output` subfolder.
 
 This enables users to:
 - See average performance across all rehearsal runs at a glance
 - Understand score variability through box plots (showing quartiles and outliers)
 - Share or analyze the generated PNG charts in external tools
 - Get a JSON summary of all computed statistics
+- Customize chart styling via `chart_config.json` without rebuilding
 
 The feature completes the data pipeline: Automation (Phase 3) collects data → Statistics (Phase 4) analyzes and visualizes it.
 
@@ -26,6 +27,10 @@ The feature completes the data pipeline: Automation (Phase 3) collects data → 
 - [x] (2026-01-15 10:25) Milestone 6: JSON export
 - [x] (2026-01-15 10:30) Milestone 7: Tray menu integration
 - [x] (2026-01-15 11:00) Milestone 8: End-to-end testing - COMPLETE
+- [x] (2026-01-15 12:00) Milestone 9: Combined box plot for all columns
+- [x] (2026-01-15 12:30) Milestone 10: Orange color scheme and improved styling
+- [x] (2026-01-15 13:00) Milestone 11: Configurable chart styling (chart_config.json)
+- [x] (2026-01-15 13:30) Milestone 12: Output to dedicated output folder
 
 
 ## Surprises & Discoveries
@@ -65,20 +70,53 @@ The feature completes the data pipeline: Automation (Phase 3) collects data → 
   Rationale: Formula `bucketSize = 1000 * max(floor((max-min)/1000/100), 1)` adapts to data range. Prevents too many or too few buckets. MIN_BUCKET_SIZE of 1000 provides reasonable granularity for typical game scores.
   Date/Author: 2026-01-15 / Implementation
 
+- Decision: Orange color scheme with table at top
+  Rationale: User provided reference screenshot showing preferred style. Table moved to top with orange header bar, histogram and box plot use orange colors, light gray background with grid lines.
+  Date/Author: 2026-01-15 / User feedback
+
+- Decision: Statistics table shows Min/Average/Median/Max (replaced Mode with Median)
+  Rationale: Median is more useful for understanding score distribution than Mode. User requested this change.
+  Date/Author: 2026-01-15 / User feedback
+
+- Decision: Add combined box plot showing all 9 columns
+  Rationale: Allows visual comparison of all score columns in a single chart. Each stage has distinct color (red/green/blue). X-axis shows all column labels (S1C1-S3C3).
+  Date/Author: 2026-01-15 / User feedback
+
+- Decision: Configurable chart styling via chart_config.json
+  Rationale: Allows iterating on font sizes, colors, and layout without rebuilding. Config is loaded fresh each time charts are generated. Default config is auto-created on first run.
+  Date/Author: 2026-01-15 / User feedback
+
+- Decision: Output files saved to `output` subfolder
+  Rationale: Keeps generated files organized separately from input files and config. Cleaner directory structure.
+  Date/Author: 2026-01-15 / User feedback
+
 
 ## Outcomes & Retrospective
 
 Phase 4 implementation is complete. The feature successfully:
 
 1. Reads CSV data from Phase 3 automation output
-2. Calculates comprehensive statistics (mean, median, mode, min, max, std_dev, quartiles)
+2. Calculates comprehensive statistics (mean, median, min, max, std_dev, quartiles)
 3. Generates 9 per-character PNG charts, each containing:
+   - Statistics table at top (Min, Average, Median, Max) with orange header
    - Box plot showing distribution (min, Q1, median, Q3, max)
-   - Histogram with dynamic bucket sizing
-   - Statistics table (MIN, MEAN, MODE, MAX)
-4. Exports full statistics to JSON for programmatic analysis
+   - Histogram with dynamic bucket sizing and legend
+4. Generates a combined box plot showing all 9 columns side by side
+5. Exports full statistics to JSON for programmatic analysis
+6. Supports configurable styling via `chart_config.json`
 
-Output files: `chart_s1c1.png` through `chart_s3c3.png` plus `statistics.json`
+Output structure:
+```
+exe_directory/
+├── results.csv              # Input from automation
+├── chart_config.json        # Styling configuration (auto-created)
+└── output/                   # Generated output
+    ├── chart_s1c1.png       # Per-column charts (9 total)
+    ├── ...
+    ├── chart_s3c3.png
+    ├── chart_combined.png   # Combined box plot
+    └── statistics.json      # JSON statistics
+```
 
 The data pipeline is now complete: Automation → OCR → CSV → Statistics → Charts
 
@@ -747,14 +785,52 @@ The statistics feature is complete when:
 
 After running "Generate Charts":
 
-    gakumas-screenshot/
+    exe_directory/
     ├── results.csv              # Input (from Phase 3)
-    ├── chart_averages.png       # Bar chart output
-    ├── chart_distribution.png   # Box plot output
-    └── statistics.json          # JSON statistics output
+    ├── chart_config.json        # Styling configuration
+    └── output/
+        ├── chart_s1c1.png       # Per-column charts (9 total)
+        ├── chart_s1c2.png
+        ├── chart_s1c3.png
+        ├── chart_s2c1.png
+        ├── chart_s2c2.png
+        ├── chart_s2c3.png
+        ├── chart_s3c1.png
+        ├── chart_s3c2.png
+        ├── chart_s3c3.png
+        ├── chart_combined.png   # Combined box plot
+        └── statistics.json      # JSON statistics output
 
 
-### Sample JSON Output
+### Sample chart_config.json
+
+    {
+      "font": {
+        "title_size": 32,
+        "table_header_size": 32,
+        "table_value_size": 32,
+        "axis_label_size": 14,
+        "legend_size": 14,
+        "box_plot_caption_size": 16
+      },
+      "colors": {
+        "orange_primary": [243, 156, 18],
+        "orange_header": [230, 126, 34],
+        "light_gray_bg": [245, 245, 245],
+        "grid_color": [220, 220, 220]
+      },
+      "layout": {
+        "chart_width": 900,
+        "chart_height": 700,
+        "title_height": 50,
+        "table_height": 90,
+        "table_header_height": 40,
+        "box_plot_width": 300
+      }
+    }
+
+
+### Sample JSON Output (statistics.json)
 
     {
       "total_runs": 10,
@@ -779,26 +855,31 @@ After running "Generate Charts":
 
 ### Chart Visual Reference
 
-Bar Chart Layout:
+Per-Column Chart Layout (chart_s1c1.png etc.):
+
+    ┌─────────────────────────────────────────────────────────┐
+    │  S1C1 Distribution                           (n = 100)  │
+    ├───────────┬───────────┬───────────┬─────────────────────┤
+    │    Min    │  Average  │  Median   │        Max          │ ← Orange header
+    ├───────────┼───────────┼───────────┼─────────────────────┤
+    │   48000   │   50500   │   50250   │       53000         │ ← Values
+    ├───────────────────────┴───────────────────────────────────┤
+    │  ┌─────────┐    ┌──────────────────────────────────┐    │
+    │  │Box Plot │    │  ██ Score (n=100)                │    │
+    │  │  ┬      │    │  ████████                        │    │
+    │  │  │      │    │  ████████████                    │    │
+    │  │ ┌┴─┐    │    │  ████████████████                │    │
+    │  │ │──│    │    │  Histogram                       │    │
+    │  │ └┬─┘    │    │                                  │    │
+    │  │  │      │    │                                  │    │
+    │  │  ┴      │    │                                  │    │
+    │  └─────────┘    └──────────────────────────────────┘    │
+    └─────────────────────────────────────────────────────────┘
+
+Combined Box Plot Layout (chart_combined.png):
 
     ┌────────────────────────────────────────────────────────┐
-    │     Average Scores by Stage/Criterion                   │
-    │                                                         │
-    │  ▓                                                      │
-    │  ▓     ▓                         ░                      │
-    │  ▓     ▓     ▓     ▒     ▒     ░░    ░                  │
-    │  ▓▓    ▓▓    ▓▓    ▒▒    ▒▒    ░░    ░░    ░░    ░░    │
-    │  ▓▓    ▓▓    ▓▓    ▒▒    ▒▒    ░░    ░░    ░░    ░░    │
-    │ ─────────────────────────────────────────────────────── │
-    │ S1C1  S1C2  S1C3  S2C1  S2C2  S2C3  S3C1  S3C2  S3C3   │
-    │                                                         │
-    │ Legend: ▓ Stage 1  ▒ Stage 2  ░ Stage 3                │
-    └────────────────────────────────────────────────────────┘
-
-Box Plot Layout:
-
-    ┌────────────────────────────────────────────────────────┐
-    │     Score Distribution by Stage/Criterion               │
+    │     Score Distribution (100 runs)                       │
     │                                                         │
     │        ┬           ┬                                    │
     │        │           │                 ┬                  │
@@ -810,6 +891,8 @@ Box Plot Layout:
     │   ┴    ┴      ┴    ┴       └───┘┴    ┴                  │
     │ ─────────────────────────────────────────────────────── │
     │ S1C1  S1C2  S1C3  S2C1  S2C2  S2C3  S3C1  S3C2  S3C3   │
+    │                                                         │
+    │ Colors: Red = Stage 1, Green = Stage 2, Blue = Stage 3 │
     └────────────────────────────────────────────────────────┘
 
 
@@ -823,6 +906,7 @@ Box Plot Layout:
 ### New Files
 
     src/analysis/mod.rs
+    src/analysis/config.rs
     src/analysis/csv_reader.rs
     src/analysis/statistics.rs
     src/analysis/charts.rs
@@ -882,13 +966,47 @@ Box Plot Layout:
     }
 
 
+### Key Types: src/analysis/config.rs
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    pub struct ChartConfig {
+        pub font: FontConfig,
+        pub colors: ColorConfig,
+        pub layout: LayoutConfig,
+    }
+
+    impl ChartConfig {
+        pub fn load(config_path: &Path) -> Self;
+        pub fn save_default(config_path: &Path) -> std::io::Result<()>;
+    }
+
+
 ### Key Functions: src/analysis/charts.rs
 
     use std::path::Path;
     use anyhow::Result;
 
-    pub fn generate_bar_chart(stats: &DataSetStats, output_path: &Path) -> Result<()>;
-    pub fn generate_box_plot(stats: &DataSetStats, output_path: &Path) -> Result<()>;
+    pub fn generate_column_chart(
+        column_name: &str,
+        values: &[u32],
+        stats: &ColumnStats,
+        total_runs: usize,
+        output_path: &Path,
+        config: &ChartConfig,
+    ) -> Result<()>;
+
+    pub fn generate_all_charts(
+        data: &DataSet,
+        stats: &DataSetStats,
+        output_dir: &Path,
+        config: &ChartConfig,
+    ) -> Result<Vec<PathBuf>>;
+
+    pub fn generate_combined_box_plot(
+        stats: &DataSetStats,
+        output_path: &Path,
+        config: &ChartConfig,
+    ) -> Result<()>;
 
 
 ### Key Functions: src/analysis/export.rs
@@ -898,16 +1016,18 @@ Box Plot Layout:
 
 ### Key Functions: src/analysis/mod.rs
 
-    pub mod csv_reader;
-    pub mod statistics;
     pub mod charts;
+    pub mod config;
+    pub mod csv_reader;
     pub mod export;
+    pub mod statistics;
 
+    pub use config::ChartConfig;
     pub use csv_reader::DataSet;
     pub use statistics::DataSetStats;
 
-    /// Run full analysis pipeline. Returns (bar_chart_path, box_plot_path, json_path).
-    pub fn generate_analysis() -> Result<(PathBuf, PathBuf, PathBuf)>;
+    /// Run full analysis pipeline. Returns (chart_paths, json_path).
+    pub fn generate_analysis() -> Result<(Vec<PathBuf>, PathBuf)>;
 
 
 ### Menu Constants in src/main.rs
@@ -920,4 +1040,5 @@ Box Plot Layout:
 ## Revision History
 
 - 2026-01-15: Initial ExecPlan created for Phase 4
+- 2026-01-15: Added combined box plot, orange styling, config file, output folder
 

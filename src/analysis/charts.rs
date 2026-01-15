@@ -1,7 +1,9 @@
 //! Chart generation using plotters.
 //!
 //! Generates per-character charts with box plot, distribution histogram, and statistics table.
+//! Styling is configurable via chart_config.json.
 
+use super::config::ChartConfig;
 use super::csv_reader::DataSet;
 use super::statistics::ColumnStats;
 use anyhow::{Context, Result};
@@ -51,51 +53,89 @@ fn build_histogram(values: &[u32], bucket_size: u32) -> (Vec<u32>, Vec<u32>) {
 }
 
 /// Generate a combined chart for a single column (stage/criterion).
-/// Contains: box plot (left), histogram (right), statistics table (bottom).
+/// Contains: statistics table (top), box plot (left), histogram (right).
 pub fn generate_column_chart(
     column_name: &str,
     values: &[u32],
     stats: &ColumnStats,
     total_runs: usize,
     output_path: &Path,
+    config: &ChartConfig,
 ) -> Result<()> {
-    let root = BitMapBackend::new(output_path, (900, 700)).into_drawing_area();
+    let root = BitMapBackend::new(
+        output_path,
+        (config.layout.chart_width, config.layout.chart_height),
+    )
+    .into_drawing_area();
     root.fill(&WHITE)
         .context("Failed to fill chart background")?;
 
-    // Title
-    let title = format!("{} Distribution ({} runs)", column_name, total_runs);
-    root.titled(&title, ("sans-serif", 24).into_font())
-        .context("Failed to draw title")?;
+    // Split into: title area, table area, chart area
+    let (title_area, rest) = root.split_vertically(config.layout.title_height);
+    let (table_area, chart_area) = rest.split_vertically(config.layout.table_height);
 
-    // Split into chart area (top) and table area (bottom)
-    let (chart_area, table_area) = root.split_vertically(580);
+    // Draw title with sample count
+    let title = format!("{} Distribution", column_name);
+    let sample_count = format!("(n = {})", total_runs);
+    let title_font = ("sans-serif", config.font.title_size)
+        .into_font()
+        .style(FontStyle::Bold);
+    title_area.draw_text(&title, &title_font.color(&BLACK), (20, 10))?;
+    // Draw sample count on the right side (same style as title)
+    let sample_x = config.layout.chart_width as i32 - 180;
+    title_area.draw_text(&sample_count, &title_font.color(&BLACK), (sample_x, 10))?;
+
+    // Draw statistics table at top
+    draw_stats_table_top(&table_area, stats, config)?;
 
     // Split chart area into box plot (left) and histogram (right)
-    let (box_area, hist_area) = chart_area.split_horizontally(350);
+    let (box_area, hist_area) = chart_area.split_horizontally(config.layout.box_plot_width);
 
     // Draw box plot
-    draw_box_plot(&box_area, values, stats)?;
+    draw_box_plot(&box_area, values, stats, config)?;
 
-    // Draw histogram
-    draw_histogram(&hist_area, values, stats)?;
-
-    // Draw statistics table
-    draw_stats_table(&table_area, stats)?;
+    // Draw histogram with legend
+    draw_histogram(&hist_area, values, stats, total_runs, config)?;
 
     root.present().context("Failed to save chart")?;
     Ok(())
 }
 
-/// Draw box plot in the given area.
+/// Draw box plot in the given area with configurable colors.
 fn draw_box_plot(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
     values: &[u32],
     stats: &ColumnStats,
+    config: &ChartConfig,
 ) -> Result<()> {
     if values.is_empty() {
         return Ok(());
     }
+
+    // Get colors from config
+    let light_gray_bg = RGBColor(
+        config.colors.light_gray_bg[0],
+        config.colors.light_gray_bg[1],
+        config.colors.light_gray_bg[2],
+    );
+    let grid_color = RGBColor(
+        config.colors.grid_color[0],
+        config.colors.grid_color[1],
+        config.colors.grid_color[2],
+    );
+    let orange_primary = RGBColor(
+        config.colors.orange_primary[0],
+        config.colors.orange_primary[1],
+        config.colors.orange_primary[2],
+    );
+    let orange_header = RGBColor(
+        config.colors.orange_header[0],
+        config.colors.orange_header[1],
+        config.colors.orange_header[2],
+    );
+
+    // Fill background with light gray
+    area.fill(&light_gray_bg)?;
 
     let min_val = stats.min as f64;
     let max_val = stats.max as f64;
@@ -104,7 +144,10 @@ fn draw_box_plot(
     let y_max = max_val + range * 0.1;
 
     let mut chart = ChartBuilder::on(area)
-        .caption("Box Plot", ("sans-serif", 18))
+        .caption(
+            "Box Plot",
+            ("sans-serif", config.font.box_plot_caption_size),
+        )
         .margin(15)
         .x_label_area_size(30)
         .y_label_area_size(70)
@@ -117,16 +160,16 @@ fn draw_box_plot(
         .disable_x_axis()
         .y_desc("Score")
         .y_label_formatter(&|y| format!("{:.0}", y))
+        .light_line_style(grid_color)
+        .bold_line_style(grid_color.mix(0.8))
         .draw()
         .context("Failed to draw mesh")?;
 
     let x_center = 1.0;
     let box_width = 0.4;
 
-    // Colors
-    let box_color = RGBColor(70, 130, 180); // Steel blue
-    let median_color = RGBColor(220, 50, 50); // Red
-    let whisker_color = RGBColor(80, 80, 80); // Dark gray
+    // Gray for whiskers
+    let whisker_color = RGBColor(100, 100, 100);
 
     // Box fill (Q1 to Q3)
     chart.draw_series(std::iter::once(Rectangle::new(
@@ -134,7 +177,7 @@ fn draw_box_plot(
             (x_center - box_width, stats.quartile_1),
             (x_center + box_width, stats.quartile_3),
         ],
-        box_color.mix(0.3).filled(),
+        orange_primary.mix(0.5).filled(),
     )))?;
 
     // Box outline
@@ -143,16 +186,16 @@ fn draw_box_plot(
             (x_center - box_width, stats.quartile_1),
             (x_center + box_width, stats.quartile_3),
         ],
-        box_color.stroke_width(2),
+        orange_header.stroke_width(2),
     )))?;
 
-    // Median line
+    // Median line (darker orange)
     chart.draw_series(std::iter::once(PathElement::new(
         vec![
             (x_center - box_width, stats.median),
             (x_center + box_width, stats.median),
         ],
-        median_color.stroke_width(3),
+        orange_header.stroke_width(3),
     )))?;
 
     // Lower whisker
@@ -183,15 +226,42 @@ fn draw_box_plot(
     Ok(())
 }
 
-/// Draw histogram in the given area.
+/// Draw histogram in the given area with configurable colors and legend.
 fn draw_histogram(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
     values: &[u32],
     stats: &ColumnStats,
+    total_runs: usize,
+    config: &ChartConfig,
 ) -> Result<()> {
     if values.is_empty() {
         return Ok(());
     }
+
+    // Get colors from config
+    let light_gray_bg = RGBColor(
+        config.colors.light_gray_bg[0],
+        config.colors.light_gray_bg[1],
+        config.colors.light_gray_bg[2],
+    );
+    let grid_color = RGBColor(
+        config.colors.grid_color[0],
+        config.colors.grid_color[1],
+        config.colors.grid_color[2],
+    );
+    let orange_primary = RGBColor(
+        config.colors.orange_primary[0],
+        config.colors.orange_primary[1],
+        config.colors.orange_primary[2],
+    );
+    let orange_header = RGBColor(
+        config.colors.orange_header[0],
+        config.colors.orange_header[1],
+        config.colors.orange_header[2],
+    );
+
+    // Fill background with light gray
+    area.fill(&light_gray_bg)?;
 
     let bucket_size = calculate_bucket_size(stats.min, stats.max);
     let (bucket_starts, counts) = build_histogram(values, bucket_size);
@@ -205,8 +275,8 @@ fn draw_histogram(
     let x_max = (bucket_starts.last().unwrap() + bucket_size) as f64;
 
     let mut chart = ChartBuilder::on(area)
-        .caption(format!("Distribution (bucket={})", bucket_size), ("sans-serif", 18))
         .margin(15)
+        .margin_top(40) // Extra space for legend
         .x_label_area_size(40)
         .y_label_area_size(50)
         .build_cartesian_2d(x_min..x_max, 0u32..(max_count + 1))
@@ -217,12 +287,12 @@ fn draw_histogram(
         .x_desc("Score")
         .y_desc("Count")
         .x_label_formatter(&|x| format!("{:.0}", x))
+        .light_line_style(grid_color)
+        .bold_line_style(grid_color.mix(0.8))
         .draw()
         .context("Failed to draw mesh")?;
 
-    let bar_color = RGBColor(100, 149, 237); // Cornflower blue
-
-    // Draw bars
+    // Draw bars with orange color
     for (i, &start) in bucket_starts.iter().enumerate() {
         let count = counts[i];
         if count > 0 {
@@ -231,70 +301,127 @@ fn draw_histogram(
                     (start as f64, 0u32),
                     ((start + bucket_size) as f64, count),
                 ],
-                bar_color.filled(),
+                orange_primary.filled(),
             )))?;
-            // Bar outline
+            // Bar outline (slightly darker)
             chart.draw_series(std::iter::once(Rectangle::new(
                 [
                     (start as f64, 0u32),
                     ((start + bucket_size) as f64, count),
                 ],
-                BLACK.stroke_width(1),
+                orange_header.stroke_width(1),
             )))?;
         }
     }
 
+    // Draw legend at top
+    let legend_text = format!("Score (n={})", total_runs);
+    let legend_x = 200;
+    let legend_y = 5;
+
+    // Legend color box
+    area.draw(&Rectangle::new(
+        [(legend_x, legend_y), (legend_x + 20, legend_y + 14)],
+        orange_primary.filled(),
+    ))?;
+    area.draw(&Rectangle::new(
+        [(legend_x, legend_y), (legend_x + 20, legend_y + 14)],
+        orange_header.stroke_width(1),
+    ))?;
+
+    // Legend text
+    area.draw_text(
+        &legend_text,
+        &("sans-serif", config.font.legend_size).into_font().color(&BLACK),
+        (legend_x + 25, legend_y),
+    )?;
+
     Ok(())
 }
 
-/// Draw statistics table at the bottom.
-fn draw_stats_table(
+/// Draw statistics table at top with configurable orange header style.
+/// Shows: Min, Average, Median, Max
+fn draw_stats_table_top(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
     stats: &ColumnStats,
+    config: &ChartConfig,
 ) -> Result<()> {
-    // Table layout
-    let table_y = 30;
-    let row_height = 25;
-    let col_widths = [150, 180, 180, 180, 180]; // Label, MIN, MEAN, MODE, MAX
+    // Get colors from config
+    let orange_header = RGBColor(
+        config.colors.orange_header[0],
+        config.colors.orange_header[1],
+        config.colors.orange_header[2],
+    );
+    let grid_color = RGBColor(
+        config.colors.grid_color[0],
+        config.colors.grid_color[1],
+        config.colors.grid_color[2],
+    );
 
-    let headers = ["", "MIN", "MEAN", "MODE", "MAX"];
+    let (width, height) = area.dim_in_pixel();
+    let col_width = width as i32 / 4;
+    let header_height = config.layout.table_header_height;
+    let value_height = height as i32 - header_height;
+
+    let headers = ["Min", "Average", "Median", "Max"];
     let values = [
-        "Value",
-        &format!("{}", stats.min),
-        &format!("{:.1}", stats.mean),
-        &format!("{}", stats.mode),
-        &format!("{}", stats.max),
+        format!("{}", stats.min),
+        format!("{:.0}", stats.mean),
+        format!("{:.0}", stats.median),
+        format!("{}", stats.max),
     ];
 
-    let font = ("sans-serif", 16).into_font();
-    let header_font = ("sans-serif", 16).into_font().style(FontStyle::Bold);
+    let header_font = ("sans-serif", config.font.table_header_size)
+        .into_font()
+        .style(FontStyle::Bold);
+    let value_font = ("sans-serif", config.font.table_value_size)
+        .into_font()
+        .style(FontStyle::Bold);
 
-    // Draw header row
-    let mut x_offset = 20;
-    for (i, header) in headers.iter().enumerate() {
-        area.draw_text(
-            header,
-            &header_font.color(&BLACK),
-            (x_offset, table_y),
-        )?;
-        x_offset += col_widths[i];
-    }
+    // Estimate character width based on font size
+    let char_width = (config.font.table_header_size / 2) as i32;
+    let value_char_width = (config.font.table_value_size / 2) as i32;
 
-    // Draw separator line
-    area.draw(&PathElement::new(
-        vec![(20, table_y + row_height - 5), (870, table_y + row_height - 5)],
-        BLACK.stroke_width(1),
-    ))?;
+    for (i, (header, value)) in headers.iter().zip(values.iter()).enumerate() {
+        let x_start = i as i32 * col_width;
 
-    // Draw value row
-    x_offset = 20;
-    for (i, value) in values.iter().enumerate() {
-        area.draw_text(
-            value,
-            &font.color(&BLACK),
-            (x_offset, table_y + row_height),
-        )?;
-        x_offset += col_widths[i];
+        // Draw orange header background
+        area.draw(&Rectangle::new(
+            [(x_start, 0), (x_start + col_width, header_height)],
+            orange_header.filled(),
+        ))?;
+
+        // Draw header border (right side)
+        if i < 3 {
+            area.draw(&PathElement::new(
+                vec![
+                    (x_start + col_width, 0),
+                    (x_start + col_width, header_height),
+                ],
+                RGBColor(200, 100, 20).stroke_width(1),
+            ))?;
+        }
+
+        // Draw header text (white, centered)
+        let header_text_x = x_start + (col_width - header.len() as i32 * char_width) / 2;
+        area.draw_text(header, &header_font.color(&WHITE), (header_text_x, 5))?;
+
+        // Draw value background (white with border)
+        area.draw(&Rectangle::new(
+            [(x_start, header_height), (x_start + col_width, header_height + value_height)],
+            WHITE.filled(),
+        ))?;
+
+        // Draw value cell border
+        area.draw(&Rectangle::new(
+            [(x_start, header_height), (x_start + col_width, header_height + value_height)],
+            grid_color.stroke_width(1),
+        ))?;
+
+        // Draw value text (centered)
+        let value_text_x = x_start + (col_width - value.len() as i32 * value_char_width) / 2;
+        let value_text_y = header_height + (value_height - config.font.table_value_size as i32) / 2;
+        area.draw_text(value, &value_font.color(&BLACK), (value_text_x, value_text_y))?;
     }
 
     Ok(())
@@ -305,6 +432,7 @@ pub fn generate_all_charts(
     data: &DataSet,
     stats: &super::statistics::DataSetStats,
     output_dir: &Path,
+    config: &ChartConfig,
 ) -> Result<Vec<std::path::PathBuf>> {
     let mut paths = Vec::new();
 
@@ -323,6 +451,7 @@ pub fn generate_all_charts(
                 col_stats,
                 stats.total_runs,
                 &output_path,
+                config,
             )?;
 
             paths.push(output_path);
@@ -330,6 +459,149 @@ pub fn generate_all_charts(
     }
 
     Ok(paths)
+}
+
+/// Generate a combined box plot showing all 9 columns side by side.
+pub fn generate_combined_box_plot(
+    stats: &super::statistics::DataSetStats,
+    output_path: &Path,
+    _config: &ChartConfig, // Reserved for future use
+) -> Result<()> {
+    let root = BitMapBackend::new(output_path, (1200, 700)).into_drawing_area();
+    root.fill(&WHITE)
+        .context("Failed to fill chart background")?;
+
+    // Find global min/max across all columns for Y-axis scaling
+    let global_min = stats
+        .columns
+        .iter()
+        .map(|c| c.min)
+        .min()
+        .unwrap_or(0) as f64;
+    let global_max = stats
+        .columns
+        .iter()
+        .map(|c| c.max)
+        .max()
+        .unwrap_or(100) as f64;
+
+    let range = global_max - global_min;
+    let y_min = (global_min - range * 0.05).max(0.0);
+    let y_max = global_max + range * 0.05;
+
+    let title = format!("Score Distribution ({} runs)", stats.total_runs);
+
+    // Split into chart area and label area at bottom
+    let (upper, lower) = root.split_vertically(650);
+
+    let mut chart = ChartBuilder::on(&upper)
+        .caption(&title, ("sans-serif", 24))
+        .margin(20)
+        .x_label_area_size(10)
+        .y_label_area_size(80)
+        .build_cartesian_2d(0.0f64..9.0f64, y_min..y_max)
+        .context("Failed to build combined box plot")?;
+
+    chart
+        .configure_mesh()
+        .disable_x_mesh()
+        .disable_x_axis()
+        .y_desc("Score")
+        .y_label_formatter(&|y| format!("{:.0}", y))
+        .draw()
+        .context("Failed to draw mesh")?;
+
+    // Draw X-axis labels manually
+    let labels = ["S1C1", "S1C2", "S1C3", "S2C1", "S2C2", "S2C3", "S3C1", "S3C2", "S3C3"];
+    let label_font = ("sans-serif", 16).into_font();
+    let chart_left = 80; // Match y_label_area_size
+    let chart_width = 1200 - chart_left - 20; // Total width minus margins
+    let box_width = chart_width as f64 / 9.0;
+
+    for (idx, label) in labels.iter().enumerate() {
+        let x_pos = chart_left + (idx as i32 * chart_width / 9) + (box_width as i32 / 2) - 15;
+        lower.draw_text(label, &label_font.color(&BLACK), (x_pos, 5))?;
+    }
+
+    // Stage colors
+    let stage_colors = [
+        RGBColor(220, 80, 80),   // Stage 1: Red
+        RGBColor(80, 180, 80),   // Stage 2: Green
+        RGBColor(80, 120, 200),  // Stage 3: Blue
+    ];
+
+    let box_width = 0.35;
+    let cap_width = 0.2;
+
+    for (idx, col_stats) in stats.columns.iter().enumerate() {
+        let stage = idx / 3;
+        let x_center = idx as f64 + 0.5;
+        let box_color = stage_colors[stage];
+        let whisker_color = RGBColor(80, 80, 80);
+
+        let min_val = col_stats.min as f64;
+        let max_val = col_stats.max as f64;
+
+        // Box fill (Q1 to Q3)
+        chart.draw_series(std::iter::once(Rectangle::new(
+            [
+                (x_center - box_width, col_stats.quartile_1),
+                (x_center + box_width, col_stats.quartile_3),
+            ],
+            box_color.mix(0.4).filled(),
+        )))?;
+
+        // Box outline
+        chart.draw_series(std::iter::once(Rectangle::new(
+            [
+                (x_center - box_width, col_stats.quartile_1),
+                (x_center + box_width, col_stats.quartile_3),
+            ],
+            box_color.stroke_width(2),
+        )))?;
+
+        // Median line
+        chart.draw_series(std::iter::once(PathElement::new(
+            vec![
+                (x_center - box_width, col_stats.median),
+                (x_center + box_width, col_stats.median),
+            ],
+            RGBColor(200, 50, 50).stroke_width(2),
+        )))?;
+
+        // Lower whisker
+        chart.draw_series(std::iter::once(PathElement::new(
+            vec![(x_center, min_val), (x_center, col_stats.quartile_1)],
+            whisker_color.stroke_width(1),
+        )))?;
+
+        // Upper whisker
+        chart.draw_series(std::iter::once(PathElement::new(
+            vec![(x_center, col_stats.quartile_3), (x_center, max_val)],
+            whisker_color.stroke_width(1),
+        )))?;
+
+        // Min cap
+        chart.draw_series(std::iter::once(PathElement::new(
+            vec![
+                (x_center - cap_width, min_val),
+                (x_center + cap_width, min_val),
+            ],
+            whisker_color.stroke_width(1),
+        )))?;
+
+        // Max cap
+        chart.draw_series(std::iter::once(PathElement::new(
+            vec![
+                (x_center - cap_width, max_val),
+                (x_center + cap_width, max_val),
+            ],
+            whisker_color.stroke_width(1),
+        )))?;
+    }
+
+    root.present().context("Failed to save combined box plot")?;
+    Ok(())
 }
 
 #[cfg(test)]

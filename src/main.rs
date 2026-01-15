@@ -7,6 +7,7 @@ mod analysis;
 mod automation;
 mod calibration;
 mod capture;
+mod gui;
 mod ocr;
 mod paths;
 
@@ -70,6 +71,36 @@ pub fn log(msg: &str) {
 static mut MAIN_HWND: HWND = HWND(std::ptr::null_mut());
 
 fn main() -> Result<()> {
+    // Set up panic hook to log panics
+    std::panic::set_hook(Box::new(|panic_info| {
+        let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let location = if let Some(loc) = panic_info.location() {
+            format!(" at {}:{}:{}", loc.file(), loc.line(), loc.column())
+        } else {
+            String::new()
+        };
+        // Try to log even if paths module isn't initialized
+        let log_msg = format!("[PANIC]{} {}\n", location, msg);
+        eprintln!("{}", log_msg);
+        if let Ok(exe_dir) = std::env::current_exe().map(|p| p.parent().unwrap().to_path_buf()) {
+            let log_path = exe_dir.join("logs").join("gakumas_screenshot.log");
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                use std::io::Write;
+                let _ = file.write_all(log_msg.as_bytes());
+            }
+        }
+    }));
+
     unsafe {
         windows::Win32::System::WinRT::RoInitialize(
             windows::Win32::System::WinRT::RO_INIT_MULTITHREADED,
@@ -88,8 +119,26 @@ fn main() -> Result<()> {
     // Load configuration
     automation::init_config();
 
-    // Run as system tray application
-    run_tray_app()
+    // Check if developer mode is enabled
+    let config = automation::get_config();
+    if config.developer_mode {
+        // Run as system tray application (developer mode)
+        log("Developer mode enabled - running tray application");
+        run_tray_app()
+    } else {
+        // Run GUI application (normal mode)
+        log("Starting GUI application...");
+        match gui::run_gui() {
+            Ok(()) => {
+                log("GUI application exited normally");
+                Ok(())
+            }
+            Err(e) => {
+                log(&format!("GUI error: {}", e));
+                Err(anyhow!("GUI error: {}", e))
+            }
+        }
+    }
 }
 
 /// Runs the main system tray application with hotkey handling.

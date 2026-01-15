@@ -95,6 +95,9 @@ pub struct AutomationConfig {
     /// OCR brightness threshold (pixels with R, G, B all > threshold are kept)
     #[serde(default = "default_ocr_threshold")]
     pub ocr_threshold: u8,
+    /// Developer mode: when enabled, runs as tray app with advanced features
+    #[serde(default)]
+    pub developer_mode: bool,
 }
 
 fn default_ocr_threshold() -> u8 {
@@ -172,6 +175,7 @@ impl Default for AutomationConfig {
             capture_delay_ms: 500,
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },
             ocr_threshold: default_ocr_threshold(),
+            developer_mode: false,
         }
     }
 }

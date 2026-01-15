@@ -70,6 +70,26 @@ impl std::fmt::Display for AutomationState {
     }
 }
 
+impl AutomationState {
+    /// Returns a Japanese description of the current state (for GUI display).
+    pub fn description_ja(&self) -> String {
+        match self {
+            AutomationState::Idle => "待機中".to_string(),
+            AutomationState::WaitingForStartPage => "開始画面を待機中".to_string(),
+            AutomationState::ClickingStart => "開始ボタンをクリック中".to_string(),
+            AutomationState::WaitingForLoading => "ローディング中".to_string(),
+            AutomationState::ClickingSkip => "スキップボタンをクリック中".to_string(),
+            AutomationState::WaitingForResult => "結果画面を待機中".to_string(),
+            AutomationState::Capturing => "スクリーンショット取得中".to_string(),
+            AutomationState::ClickingEnd => "終了ボタンをクリック中".to_string(),
+            AutomationState::CheckingLoop => "次のループを確認中".to_string(),
+            AutomationState::Complete => "完了".to_string(),
+            AutomationState::Error(msg) => format!("エラー: {}", msg),
+            AutomationState::Aborted => "中断".to_string(),
+        }
+    }
+}
+
 /// Automation context holding state and configuration.
 pub struct AutomationContext {
     /// Current state

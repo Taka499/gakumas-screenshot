@@ -6,7 +6,8 @@
 use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
 use std::thread;
 
 use crate::automation::config::get_config;
@@ -19,6 +20,15 @@ use crate::capture::find_gakumas_window;
 /// Global flag indicating if automation is currently running.
 static AUTOMATION_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Current iteration counter (for GUI progress display).
+static CURRENT_ITERATION: AtomicU32 = AtomicU32::new(0);
+
+/// Total iterations for current run (for GUI progress display).
+static TOTAL_ITERATIONS: AtomicU32 = AtomicU32::new(0);
+
+/// Current state description (for GUI progress display).
+static CURRENT_STATE_DESC: Mutex<String> = Mutex::new(String::new());
+
 /// Default number of iterations if not specified in config.
 const DEFAULT_ITERATIONS: u32 = 10;
 
@@ -28,6 +38,31 @@ const DEFAULT_CSV_PATH: &str = "results.csv";
 /// Checks if automation is currently running.
 pub fn is_automation_running() -> bool {
     AUTOMATION_RUNNING.load(Ordering::SeqCst)
+}
+
+/// Gets the current iteration number (0-based, for GUI progress display).
+pub fn get_current_iteration() -> u32 {
+    CURRENT_ITERATION.load(Ordering::SeqCst)
+}
+
+/// Gets the total number of iterations for current run.
+pub fn get_total_iterations() -> u32 {
+    TOTAL_ITERATIONS.load(Ordering::SeqCst)
+}
+
+/// Gets the current state description (for GUI progress display).
+pub fn get_current_state_description() -> String {
+    CURRENT_STATE_DESC
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| "不明".to_string())
+}
+
+/// Updates the current state description (called from automation thread).
+fn update_state_description(desc: &str) {
+    if let Ok(mut s) = CURRENT_STATE_DESC.lock() {
+        *s = desc.to_string();
+    }
 }
 
 /// Starts the automation loop in a background thread.
@@ -79,6 +114,11 @@ pub fn start_automation(max_iterations: Option<u32>) -> Result<()> {
         return Err(anyhow!("Failed to initialize CSV file: {}", e));
     }
 
+    // Initialize progress counters for GUI
+    CURRENT_ITERATION.store(0, Ordering::SeqCst);
+    TOTAL_ITERATIONS.store(iterations, Ordering::SeqCst);
+    update_state_description("開始中...");
+
     crate::log(&format!(
         "Starting automation: {} iterations (Ctrl+Shift+Q to abort)",
         iterations
@@ -126,6 +166,10 @@ fn run_automation_loop(
 
     // Run state machine until complete
     loop {
+        // Update progress counters for GUI
+        CURRENT_ITERATION.store(ctx.current_iteration, Ordering::SeqCst);
+        update_state_description(&ctx.state.description_ja());
+
         match ctx.step() {
             Ok(true) => {
                 // Continue running

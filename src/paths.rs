@@ -33,10 +33,16 @@ pub fn get_tesseract_dir() -> PathBuf {
     get_exe_dir().join("tesseract")
 }
 
+/// Returns the output directory: `<exe_dir>/output/`
+pub fn get_output_dir() -> PathBuf {
+    get_exe_dir().join("output")
+}
+
 /// Ensures all output directories exist. Call at startup.
 pub fn ensure_directories() -> std::io::Result<()> {
     std::fs::create_dir_all(get_logs_dir())?;
     std::fs::create_dir_all(get_screenshots_dir())?;
     std::fs::create_dir_all(get_rehearsal_template_dir())?;
+    std::fs::create_dir_all(get_output_dir())?;
     Ok(())
 }

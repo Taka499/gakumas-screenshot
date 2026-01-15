@@ -4,4 +4,5 @@ Cargo.lock
 *.log
 *.png
 !resources/template/**/*.png
+!resources/guide/**/*.png
 tmpclaude-*

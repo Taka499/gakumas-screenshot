@@ -31,7 +31,7 @@ const HOTKEY_ABORT: i32 = 102;
 /// Global hotkey event signal (set by hotkey thread, read by GUI thread)
 static HOTKEY_TRIGGERED: AtomicI32 = AtomicI32::new(0);
 
-/// Embedded guide images (TODO: need to udpate the build to copy the file to release, just like template iamges).
+/// Embedded guide images (also copied to resources/guide/ by build.rs and package-release.ps1).
 const GUIDE_IMAGE_1: &[u8] = include_bytes!("../../resources/guide/step1_contest_mode.png");
 const GUIDE_IMAGE_2: &[u8] = include_bytes!("../../resources/guide/step2_rehearsal_page.png");
 

@@ -37,12 +37,14 @@ New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $releaseDir "logs") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $releaseDir "screenshots") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $releaseDir "resources/template/rehearsal") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $releaseDir "resources/guide") -Force | Out-Null
 
 Write-Host "Created directory structure:" -ForegroundColor Green
 Write-Host "  $releaseDir/"
 Write-Host "  $releaseDir/logs/"
 Write-Host "  $releaseDir/screenshots/"
 Write-Host "  $releaseDir/resources/template/rehearsal/"
+Write-Host "  $releaseDir/resources/guide/"
 Write-Host ""
 
 # Copy executable
@@ -70,6 +72,15 @@ if (Test-Path $templateSrc) {
     Write-Host "Copied template folder to resources/" -ForegroundColor Green
 } else {
     Write-Host "No template folder found" -ForegroundColor Gray
+}
+
+# Copy guide images
+$guideSrc = "resources/guide"
+if (Test-Path $guideSrc) {
+    Copy-Item -Path $guideSrc -Destination $resourcesDst -Recurse -Force
+    Write-Host "Copied guide folder to resources/" -ForegroundColor Green
+} else {
+    Write-Host "No guide folder found" -ForegroundColor Gray
 }
 
 Write-Host ""

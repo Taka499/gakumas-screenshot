@@ -6,8 +6,9 @@ fn main() {
     // Embed the Windows manifest that requests administrator privileges
     let _ = embed_resource::compile("gakumas-screenshot.rc", embed_resource::NONE);
 
-    // Copy template folder and config to target directory
+    // Copy resources and config to target directory
     copy_templates();
+    copy_guide_images();
     copy_config();
 }
 
@@ -48,6 +49,24 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
                 let _ = fs::copy(&src_path, &dst_path);
             }
         }
+    }
+}
+
+/// Copies the guide images folder to the target directory for GUI instructions.
+fn copy_guide_images() {
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_path = Path::new(&out_dir);
+    let target_dir = out_path
+        .ancestors()
+        .nth(3)
+        .expect("Could not find target directory");
+
+    let guide_src = Path::new("resources/guide");
+    let guide_dst = target_dir.join("resources").join("guide");
+
+    if guide_src.exists() {
+        copy_dir_recursive(guide_src, &guide_dst);
+        println!("cargo:rerun-if-changed=resources/guide/");
     }
 }
 

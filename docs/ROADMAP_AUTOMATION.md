@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| Version | 1.6 |
+| Version | 1.8 |
 | Created | 2026-01-12 |
-| Status | Phase 4 Complete |
+| Status | Phase 5 In Progress |
 | Target | Complete automation of rehearsal → screenshot → OCR → statistics pipeline |
 
 ---
@@ -1598,22 +1598,41 @@ A future phase will add a graphical user interface using a Rust GUI framework.
 | `iced` | Elm-inspired, clean API | Larger binary |
 | `tauri` | Web technologies, mature ecosystem | Separate frontend skills |
 
-#### 9.4.2 GUI Features (Future)
+#### 9.4.2 GUI Features (Implemented)
+
+- **Real-time progress visualization**: Progress bar, elapsed time, current state description
+- **Iteration counter input**: User-configurable number of iterations (1-9999)
+- **Start/Stop buttons**: Visual controls for automation
+- **Guide images**: Embedded screenshots showing required game state
+- **Mouse warning**: Orange warning "⚠ 実行中はマウスを動かさないでください" during automation
+- **Completion summary**: Shows generated files (results.csv, statistics.json, charts/)
+- **Output path display**: Status shows folder name (e.g., "完了 (100回) → 20260116_143022")
+- **Open Folder button**: Quick access to session output folder
+- **Generate Charts button**: Manual chart regeneration
+- **System tray integration**: Runs in background with tray icon and menu
+
+#### 9.4.3 GUI Features (Future)
 
 - Visual calibration (click on game window to set coordinates)
-- Real-time progress visualization
 - Chart display with character icons
 - Settings editor
 - History of past runs
 
 ### 9.5 Deliverables for Phase 5
 
-| Deliverable | Description |
-|-------------|-------------|
-| CLI argument parsing | Using `clap` crate |
-| Calibration wizard | Interactive coordinate setup |
-| Config file loading/saving | JSON-based configuration |
-| Progress display | Console-based progress updates |
+| Deliverable | Status | Description |
+|-------------|--------|-------------|
+| egui-based GUI window | ✅ | Main application window with eframe |
+| Guide images display | ✅ | Embedded step-by-step instruction images |
+| Iteration input | ✅ | DragValue control for iteration count |
+| Start/Stop controls | ✅ | Button controls for automation |
+| Progress visualization | ✅ | Progress bar, elapsed time, state description |
+| Mouse movement warning | ✅ | Orange warning text during automation |
+| Completion feedback | ✅ | Shows output folder name and generated files |
+| Open Folder action | ✅ | Opens session folder in Windows Explorer |
+| Generate Charts action | ✅ | Manual chart generation button |
+| System tray integration | ✅ | Tray icon with menu (show window, exit) |
+| Global hotkeys | ✅ | Ctrl+Shift+S (screenshot), Ctrl+Shift+Q (abort) |
 
 ---
 
@@ -1914,3 +1933,4 @@ gakumas-screenshot/
 | 1.5 | 2026-01-15 | Phase 3 complete: automation loop with state machine, histogram-based page detection, 9-step calibration, cursor exclusion, background OCR, CSV output |
 | 1.6 | 2026-01-15 | Phase 4 complete: statistics calculation, per-character charts (box plot + histogram), statistics table, JSON export |
 | 1.7 | 2026-01-15 | Phase 4 enhancements: combined box plot, orange styling, configurable chart_config.json, output folder |
+| 1.8 | 2026-01-16 | Phase 5 GUI improvements: completion summary with generated files, output path in status, mouse movement warning |

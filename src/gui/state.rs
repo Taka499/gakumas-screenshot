@@ -42,8 +42,13 @@ impl AutomationStatus {
             Self::Running { current, total, state_description, .. } => {
                 format!("実行中 ({}/{}) - {}", current, total, state_description)
             }
-            Self::Completed { total, .. } => {
-                format!("完了 ({}回)", total)
+            Self::Completed { total, session_path } => {
+                // Extract folder name from path for display
+                let folder_name = session_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("output");
+                format!("完了 ({}回) → {}", total, folder_name)
             }
             Self::Aborted => "中断".to_string(),
             Self::Error(msg) => format!("エラー: {}", msg),

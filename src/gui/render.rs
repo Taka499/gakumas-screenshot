@@ -111,6 +111,16 @@ pub fn render_progress(
 
     ui.label(RichText::new(state.status.status_text()).color(status_color));
 
+    // Warning notice while running
+    if state.status.is_running() {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("⚠ 実行中はマウスを動かさないでください")
+                .color(Color32::from_rgb(200, 120, 0))
+                .small()
+        );
+    }
+
     // Progress bar
     ui.add_space(8.0);
     let progress = state.status.progress();
@@ -128,6 +138,44 @@ pub fn render_progress(
             ui.label("経過時間:");
             ui.label(elapsed);
         });
+    }
+
+    // Completion summary (if completed)
+    if let AutomationStatus::Completed { session_path, .. } = &state.status {
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Show generated files info
+        ui.label(RichText::new("生成ファイル:").strong());
+        ui.add_space(4.0);
+
+        // Check what files exist in the session folder
+        let results_csv = session_path.join("results.csv");
+        let stats_json = session_path.join("statistics.json");
+        let charts_dir = session_path.join("charts");
+
+        if results_csv.exists() {
+            ui.label("  ✓ results.csv (OCR結果)");
+        }
+
+        if stats_json.exists() {
+            ui.label("  ✓ statistics.json (統計データ)");
+        }
+
+        if charts_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&charts_dir) {
+                let chart_count = entries.filter(|e| {
+                    e.as_ref().map(|e| e.path().extension().map(|x| x == "png").unwrap_or(false)).unwrap_or(false)
+                }).count();
+                if chart_count > 0 {
+                    ui.label(format!("  ✓ charts/ ({}個のグラフ)", chart_count));
+                }
+            }
+        }
+
+        ui.add_space(4.0);
+        ui.label(RichText::new("下の「フォルダを開く」で結果を確認").color(Color32::from_rgb(0, 120, 200)));
     }
 }
 

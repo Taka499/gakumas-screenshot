@@ -3,7 +3,14 @@ use image::{ImageBuffer, Luma};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use super::setup::{find_tesseract_executable, find_tessdata_dir};
+
+/// Windows flag to prevent console window from appearing
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Represents a line of OCR text with confidence score
 #[derive(Debug, Clone)]
@@ -30,13 +37,18 @@ pub fn recognize_image(img: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Result<Vec<OcrLi
     let temp_input = NamedTempFile::with_suffix(".png")?;
     img.save(temp_input.path())?;
 
-    // Create temporary output file (Tesseract adds .tsv extension)
-    let temp_output = NamedTempFile::new()?;
-    let output_base = temp_output.path().to_string_lossy().to_string();
+    // Create a unique output base path for Tesseract
+    // Tesseract will append .tsv to this path
+    let temp_dir = std::env::temp_dir();
+    let output_base = temp_dir
+        .join(format!("tesseract_out_{}", std::process::id()))
+        .to_string_lossy()
+        .to_string();
 
     // Run Tesseract with TSV output for structured data
-    let output = Command::new(&tesseract_exe)
-        .arg(temp_input.path())
+    // Use -c tessedit_create_tsv=1 instead of "tsv" config file
+    let mut cmd = Command::new(&tesseract_exe);
+    cmd.arg(temp_input.path())
         .arg(&output_base)
         .arg("--tessdata-dir")
         .arg(&tessdata_dir)
@@ -44,18 +56,37 @@ pub fn recognize_image(img: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Result<Vec<OcrLi
         .arg("eng")
         .arg("--psm")
         .arg("6") // Assume single uniform block of text
-        .arg("tsv") // Output TSV format
-        .output()?;
+        .arg("-c")
+        .arg("tessedit_create_tsv=1");
+
+    // Prevent console window from appearing on Windows
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output()?;
+
+    // Check for errors (log stderr even on success for debugging)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        crate::log(&format!("Tesseract stderr: {}", stderr.trim()));
+    }
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Tesseract failed: {}", stderr));
+        return Err(anyhow!("Tesseract failed with exit code {:?}: {}", output.status.code(), stderr));
     }
 
     // Read TSV output
     let tsv_path = format!("{}.tsv", output_base);
-    let tsv_content = std::fs::read_to_string(&tsv_path)
-        .map_err(|e| anyhow!("Failed to read Tesseract output: {}", e))?;
+    let tsv_content = match std::fs::read_to_string(&tsv_path) {
+        Ok(content) => content,
+        Err(e) => {
+            // Log debugging info
+            crate::log(&format!("Tesseract output base: {}", output_base));
+            crate::log(&format!("Expected TSV path: {}", tsv_path));
+            crate::log(&format!("Tesseract stdout: {}", String::from_utf8_lossy(&output.stdout).trim()));
+            return Err(anyhow!("Failed to read Tesseract output at {}: {}", tsv_path, e));
+        }
+    };
 
     // Clean up output file
     let _ = std::fs::remove_file(&tsv_path);
@@ -166,16 +197,21 @@ pub fn recognize_image_simple(img: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Result<St
     img.save(temp_input.path())?;
 
     // Run Tesseract to stdout
-    let output = Command::new(&tesseract_exe)
-        .arg(temp_input.path())
+    let mut cmd = Command::new(&tesseract_exe);
+    cmd.arg(temp_input.path())
         .arg("stdout")
         .arg("--tessdata-dir")
         .arg(&tessdata_dir)
         .arg("-l")
         .arg("eng")
         .arg("--psm")
-        .arg("6")
-        .output()?;
+        .arg("6");
+
+    // Prevent console window from appearing on Windows
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

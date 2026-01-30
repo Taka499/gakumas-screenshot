@@ -163,8 +163,8 @@ impl Default for AutomationConfig {
                 height: 0.04,
             },
             // Brightness threshold: Skip button dimmed ~92, enabled ~97
-            // Set to 95 to detect when Skip button becomes enabled
-            brightness_threshold: 95.0,
+            // Set to 94 to detect when Skip button becomes enabled
+            brightness_threshold: 94.0,
             histogram_threshold: default_histogram_threshold(),
             skip_button_reference: default_skip_button_reference(),
             end_button: default_end_button(),

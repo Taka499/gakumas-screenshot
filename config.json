@@ -20,7 +20,7 @@
     "width": 0.22,
     "height": 0.04
   },
-  "brightness_threshold": 95.0,
+  "brightness_threshold": 94.0,
   "histogram_threshold": 0.85,
   "skip_button_reference": "resources/template/rehearsal/skip_button_ref.png",
   "end_button": {

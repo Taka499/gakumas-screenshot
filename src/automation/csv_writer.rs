@@ -33,6 +33,34 @@ pub fn init_csv(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Appends just the 9 scores (comma-separated, no header) to rehearsal_data.csv.
+///
+/// This file contains only raw score data for easy external processing.
+pub fn append_to_raw_csv(path: &Path, scores: &[[u32; 3]; 3]) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .context("Failed to open raw CSV for append")?;
+
+    // Format: s1c1,s1c2,s1c3,s2c1,s2c2,s2c3,s3c1,s3c2,s3c3 (no header, just scores)
+    let line = format!(
+        "{},{},{},{},{},{},{},{},{}",
+        scores[0][0],
+        scores[0][1],
+        scores[0][2],
+        scores[1][0],
+        scores[1][1],
+        scores[1][2],
+        scores[2][0],
+        scores[2][1],
+        scores[2][2],
+    );
+
+    writeln!(file, "{}", line).context("Failed to write raw CSV row")?;
+    Ok(())
+}
+
 /// Appends one result row to the CSV file.
 ///
 /// Opens the file in append mode for each write, ensuring crash safety.

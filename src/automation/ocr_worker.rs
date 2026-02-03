@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use crate::automation::csv_writer::append_to_csv;
+use crate::automation::csv_writer::{append_to_csv, append_to_raw_csv};
 use crate::automation::queue::OcrWorkItem;
 use crate::ocr::ocr_screenshot;
 
@@ -67,6 +67,15 @@ pub fn run_ocr_worker(receiver: Receiver<OcrWorkItem>, csv_path: PathBuf, ocr_th
                         work_item.iteration, e
                     ));
                     // Continue anyway - the screenshot is saved for manual retry
+                }
+
+                // Append to raw CSV (just scores, no header)
+                let raw_csv_path = csv_path.with_file_name("rehearsal_data.csv");
+                if let Err(e) = append_to_raw_csv(&raw_csv_path, &scores) {
+                    crate::log(&format!(
+                        "OCR worker: failed to write raw CSV for iteration {}: {}",
+                        work_item.iteration, e
+                    ));
                 }
             }
             Err(_) => {

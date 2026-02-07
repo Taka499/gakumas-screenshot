@@ -105,9 +105,9 @@ pub struct AutomationConfig {
 
 fn default_score_regions() -> [RelativeRect; 3] {
     [
-        RelativeRect { x: 0.0, y: 0.165, width: 1.0, height: 0.035 },  // Stage 1
-        RelativeRect { x: 0.0, y: 0.418, width: 1.0, height: 0.035 },  // Stage 2
-        RelativeRect { x: 0.0, y: 0.670, width: 1.0, height: 0.035 },  // Stage 3
+        RelativeRect { x: 0.0, y: 0.179, width: 1.0, height: 0.022 },  // Stage 1
+        RelativeRect { x: 0.0, y: 0.430, width: 1.0, height: 0.022 },  // Stage 2
+        RelativeRect { x: 0.0, y: 0.685, width: 1.0, height: 0.022 },  // Stage 3
     ]
 }
 

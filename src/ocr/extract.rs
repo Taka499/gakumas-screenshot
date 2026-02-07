@@ -45,6 +45,20 @@ fn is_dash_like(text: &str) -> bool {
     })
 }
 
+/// Strips leading non-score characters that Tesseract sometimes prepends.
+///
+/// OCR occasionally prepends `"`, `$`, or Unicode garbage to the leftmost
+/// word due to horizontal line artifacts in the threshold image.
+/// This strips everything before the first digit or dash character.
+fn sanitize_ocr_word(text: &str) -> &str {
+    let start = text.find(|c: char| c.is_ascii_digit() || is_dash_char(c));
+    match start {
+        Some(0) => text,
+        Some(pos) => &text[pos..],
+        None => text, // No digits found, return as-is (will fail regex anyway)
+    }
+}
+
 /// Extracts per-character scores from a single cropped stage region.
 ///
 /// Collects all words matching SCORE_PATTERN from the OCR output, filters out
@@ -59,8 +73,15 @@ pub fn extract_single_stage(lines: &[OcrLine]) -> Result<[u32; 3]> {
 
     for line in lines {
         for word in &line.words {
-            if score_regex.is_match(&word.text) {
-                let val = parse_score(&word.text)?;
+            let sanitized = sanitize_ocr_word(&word.text);
+            if sanitized != word.text {
+                log(&format!(
+                    "Sanitized OCR word: '{}' → '{}'",
+                    word.text, sanitized
+                ));
+            }
+            if score_regex.is_match(sanitized) {
+                let val = parse_score(sanitized)?;
                 // Filter noise: real per-character scores are thousands+
                 if val >= 100 {
                     scores.push(val);
@@ -357,6 +378,32 @@ mod tests {
         let lines = vec![make_line(&["12345", "ー", "23456"], 90.0)];
         let result = extract_single_stage(&lines).unwrap();
         assert_eq!(result, [12345, 23456, 0]);
+    }
+
+    #[test]
+    fn test_sanitize_ocr_word() {
+        // Leading quote stripped
+        assert_eq!(sanitize_ocr_word("\"284,467"), "284,467");
+        // Leading dollar stripped
+        assert_eq!(sanitize_ocr_word("$5,051"), "5,051");
+        // No-op for clean word
+        assert_eq!(sanitize_ocr_word("284,467"), "284,467");
+        // Dash preserved
+        assert_eq!(sanitize_ocr_word("ー"), "ー");
+        // Empty string
+        assert_eq!(sanitize_ocr_word(""), "");
+        // All garbage, no digits
+        assert_eq!(sanitize_ocr_word("\"\""), "\"\"");
+        // Multiple leading garbage chars
+        assert_eq!(sanitize_ocr_word("$\"123"), "123");
+    }
+
+    #[test]
+    fn test_extract_single_stage_with_garbled_prefix() {
+        // Tesseract prepends " to leftmost word
+        let lines = vec![make_line(&["\"284,467", "70,673", "159,749"], 90.0)];
+        let result = extract_single_stage(&lines).unwrap();
+        assert_eq!(result, [284467, 70673, 159749]);
     }
 
     #[test]

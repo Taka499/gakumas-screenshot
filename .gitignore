@@ -6,3 +6,4 @@ Cargo.lock
 !resources/template/**/*.png
 !resources/guide/**/*.png
 tmpclaude-*
+/debug/

@@ -50,7 +50,7 @@ Key technical details:
 - **Screen Capture**: Windows Graphics Capture (WGC) API via `IGraphicsCaptureItemInterop::CreateForWindow`
 - **GPU Pipeline**: D3D11 device creates staging texture, copies captured frame, maps for CPU read
 - **Embedded Tesseract**: `include_bytes!` embeds tesseract.zip, extracted on first run to exe directory
-- **OCR Pipeline**: Per-stage cropping (`score_regions` in config) → brightness thresholding → Tesseract `--psm 6` → regex extraction. Each stage processed independently to avoid cross-stage noise
+- **OCR Pipeline**: Per-stage cropping (`score_regions` in config) → brightness thresholding → Tesseract `--psm 6` → sanitize leading garbage chars → regex extraction. Each stage processed independently to avoid cross-stage noise. Crop regions are tightened to exclude horizontal UI divider lines that confuse Tesseract layout analysis
 
 ## Key Constants and Hotkeys
 

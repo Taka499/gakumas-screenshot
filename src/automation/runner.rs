@@ -190,9 +190,10 @@ fn run_automation_loop(
 
     // Spawn OCR worker thread
     let ocr_threshold = config.ocr_threshold;
+    let score_regions = config.score_regions;
     let csv_path_clone = csv_path.clone();
     let ocr_handle = thread::spawn(move || {
-        run_ocr_worker(receiver, csv_path_clone, ocr_threshold);
+        run_ocr_worker(receiver, csv_path_clone, ocr_threshold, score_regions);
     });
 
     // Create and run state machine

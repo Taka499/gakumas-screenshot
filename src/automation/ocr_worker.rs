@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
+use crate::automation::config::RelativeRect;
 use crate::automation::csv_writer::{append_to_csv, append_to_raw_csv};
 use crate::automation::queue::OcrWorkItem;
 use crate::ocr::ocr_screenshot;
@@ -17,7 +18,12 @@ use crate::ocr::ocr_screenshot;
 ///
 /// This function blocks until the channel closes, so it should be run in a
 /// dedicated thread.
-pub fn run_ocr_worker(receiver: Receiver<OcrWorkItem>, csv_path: PathBuf, ocr_threshold: u8) {
+pub fn run_ocr_worker(
+    receiver: Receiver<OcrWorkItem>,
+    csv_path: PathBuf,
+    ocr_threshold: u8,
+    score_regions: [RelativeRect; 3],
+) {
     crate::log("OCR worker started");
 
     loop {
@@ -43,7 +49,7 @@ pub fn run_ocr_worker(receiver: Receiver<OcrWorkItem>, csv_path: PathBuf, ocr_th
                 };
 
                 // Run OCR
-                let scores = match ocr_screenshot(&img, ocr_threshold) {
+                let scores = match ocr_screenshot(&img, ocr_threshold, &score_regions) {
                     Ok(scores) => scores,
                     Err(e) => {
                         crate::log(&format!(
@@ -99,16 +105,24 @@ mod tests {
 
     #[test]
     fn test_worker_exits_when_channel_closes() {
+        use crate::automation::config::RelativeRect;
+
         let dir = tempdir().unwrap();
         let csv_path = dir.path().join("test.csv");
         init_csv(&csv_path).unwrap();
 
         let (sender, receiver) = create_work_queue();
 
+        let score_regions = [
+            RelativeRect { x: 0.0, y: 0.165, width: 1.0, height: 0.035 },
+            RelativeRect { x: 0.0, y: 0.418, width: 1.0, height: 0.035 },
+            RelativeRect { x: 0.0, y: 0.670, width: 1.0, height: 0.035 },
+        ];
+
         // Spawn worker
         let csv_path_clone = csv_path.clone();
         let handle = thread::spawn(move || {
-            run_ocr_worker(receiver, csv_path_clone, 190);
+            run_ocr_worker(receiver, csv_path_clone, 190, score_regions);
         });
 
         // Drop sender to close channel

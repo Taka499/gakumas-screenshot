@@ -187,6 +187,65 @@ fn parse_tsv_output(tsv: &str) -> Result<Vec<OcrLine>> {
     Ok(lines)
 }
 
+/// Runs Tesseract on a cropped score-row image.
+///
+/// Uses --psm 6 (block of text) for proper word segmentation when multiple
+/// numbers are present in the cropped region. No character whitelist is used;
+/// the crop itself limits noise, and downstream regex filtering handles the rest.
+pub fn recognize_image_line(img: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Result<Vec<OcrLine>> {
+    let tesseract_exe = find_tesseract_executable()?;
+    let tessdata_dir = find_tessdata_dir()?;
+
+    // Save image to temporary file
+    let temp_input = NamedTempFile::with_suffix(".png")?;
+    img.save(temp_input.path())?;
+
+    let temp_dir = std::env::temp_dir();
+    let output_base = temp_dir
+        .join(format!("tesseract_line_{}", std::process::id()))
+        .to_string_lossy()
+        .to_string();
+
+    let mut cmd = Command::new(&tesseract_exe);
+    cmd.arg(temp_input.path())
+        .arg(&output_base)
+        .arg("--tessdata-dir")
+        .arg(&tessdata_dir)
+        .arg("-l")
+        .arg("eng")
+        .arg("--psm")
+        .arg("6") // Block of text — better word segmentation for multiple numbers
+        .arg("-c")
+        .arg("tessedit_create_tsv=1");
+
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output()?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        crate::log(&format!("Tesseract stderr: {}", stderr.trim()));
+    }
+
+    if !output.status.success() {
+        return Err(anyhow!("Tesseract failed with exit code {:?}: {}", output.status.code(), stderr));
+    }
+
+    let tsv_path = format!("{}.tsv", output_base);
+    let tsv_content = match std::fs::read_to_string(&tsv_path) {
+        Ok(content) => content,
+        Err(e) => {
+            crate::log(&format!("Expected TSV path: {}", tsv_path));
+            return Err(anyhow!("Failed to read Tesseract output at {}: {}", tsv_path, e));
+        }
+    };
+
+    let _ = std::fs::remove_file(&tsv_path);
+
+    parse_tsv_output(&tsv_content)
+}
+
 /// Simple OCR that just returns raw text (for debugging)
 pub fn recognize_image_simple(img: &ImageBuffer<Luma<u8>, Vec<u8>>) -> Result<String> {
     let tesseract_exe = find_tesseract_executable()?;

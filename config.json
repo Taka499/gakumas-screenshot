@@ -41,5 +41,10 @@
     "x": 0.5,
     "y": 0.5
   },
-  "ocr_threshold": 190
+  "ocr_threshold": 190,
+  "score_regions": [
+    { "x": 0.0, "y": 0.165, "width": 1.0, "height": 0.035 },
+    { "x": 0.0, "y": 0.418, "width": 1.0, "height": 0.035 },
+    { "x": 0.0, "y": 0.670, "width": 1.0, "height": 0.035 }
+  ]
 }

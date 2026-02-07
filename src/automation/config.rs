@@ -95,9 +95,20 @@ pub struct AutomationConfig {
     /// OCR brightness threshold (pixels with R, G, B all > threshold are kept)
     #[serde(default = "default_ocr_threshold")]
     pub ocr_threshold: u8,
+    /// Per-stage score regions for cropped OCR (3 stages)
+    #[serde(default = "default_score_regions")]
+    pub score_regions: [RelativeRect; 3],
     /// Developer mode: when enabled, runs as tray app with advanced features
     #[serde(default)]
     pub developer_mode: bool,
+}
+
+fn default_score_regions() -> [RelativeRect; 3] {
+    [
+        RelativeRect { x: 0.0, y: 0.165, width: 1.0, height: 0.035 },  // Stage 1
+        RelativeRect { x: 0.0, y: 0.418, width: 1.0, height: 0.035 },  // Stage 2
+        RelativeRect { x: 0.0, y: 0.670, width: 1.0, height: 0.035 },  // Stage 3
+    ]
 }
 
 fn default_ocr_threshold() -> u8 {
@@ -175,6 +186,7 @@ impl Default for AutomationConfig {
             capture_delay_ms: 500,
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },
             ocr_threshold: default_ocr_threshold(),
+            score_regions: default_score_regions(),
             developer_mode: false,
         }
     }

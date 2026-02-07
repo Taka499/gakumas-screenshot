@@ -45,6 +45,50 @@ fn is_dash_like(text: &str) -> bool {
     })
 }
 
+/// Extracts per-character scores from a single cropped stage region.
+///
+/// Collects all words matching SCORE_PATTERN from the OCR output, filters out
+/// noise (scores < 100), and maps them left-to-right. Since blank characters (ー)
+/// are always on the right side, missing slots are padded with 0 on the right.
+///
+/// Returns an error if no scores are found (each stage has at least 1 character).
+pub fn extract_single_stage(lines: &[OcrLine]) -> Result<[u32; 3]> {
+    let score_regex = Regex::new(SCORE_PATTERN)?;
+
+    let mut scores: Vec<u32> = Vec::new();
+
+    for line in lines {
+        for word in &line.words {
+            if score_regex.is_match(&word.text) {
+                let val = parse_score(&word.text)?;
+                // Filter noise: real per-character scores are thousands+
+                if val >= 100 {
+                    scores.push(val);
+                }
+                // val == 0 means dash → skip (blank character, don't count)
+            }
+        }
+    }
+
+    if scores.is_empty() {
+        return Err(anyhow!("No scores found in cropped stage region"));
+    }
+
+    // Map left-to-right, pad missing positions with 0
+    let mut result = [0u32; 3];
+    for (i, &s) in scores.iter().take(3).enumerate() {
+        result[i] = s;
+    }
+
+    log(&format!(
+        "Stage scores: {:?} (found {} words)",
+        result,
+        scores.len()
+    ));
+
+    Ok(result)
+}
+
 /// Extracts 9 scores from OCR output using pattern matching.
 /// Returns [[u32; 3]; 3] representing [stage][breakdown] scores.
 ///
@@ -270,6 +314,49 @@ mod tests {
         assert!(!is_dash_like("1234"));
         assert!(!is_dash_like(""));
         assert!(!is_dash_like("hello"));
+    }
+
+    #[test]
+    fn test_extract_single_stage_three_scores() {
+        let lines = vec![make_line(&["12345", "23456", "34567"], 90.0)];
+        let result = extract_single_stage(&lines).unwrap();
+        assert_eq!(result, [12345, 23456, 34567]);
+    }
+
+    #[test]
+    fn test_extract_single_stage_two_scores_one_dash() {
+        let lines = vec![make_line(&["12345", "23456"], 90.0)];
+        let result = extract_single_stage(&lines).unwrap();
+        assert_eq!(result, [12345, 23456, 0]);
+    }
+
+    #[test]
+    fn test_extract_single_stage_one_score_two_dashes() {
+        let lines = vec![make_line(&["12345"], 90.0)];
+        let result = extract_single_stage(&lines).unwrap();
+        assert_eq!(result, [12345, 0, 0]);
+    }
+
+    #[test]
+    fn test_extract_single_stage_noise_filtered() {
+        // Small numbers (<100) should be filtered as noise
+        let lines = vec![make_line(&["12345", "50", "23456"], 90.0)];
+        let result = extract_single_stage(&lines).unwrap();
+        assert_eq!(result, [12345, 23456, 0]);
+    }
+
+    #[test]
+    fn test_extract_single_stage_no_scores_error() {
+        let lines = vec![make_line(&["50", "30"], 90.0)];
+        assert!(extract_single_stage(&lines).is_err());
+    }
+
+    #[test]
+    fn test_extract_single_stage_dashes_ignored() {
+        // Dashes parse to 0, which is < 100, so they're skipped
+        let lines = vec![make_line(&["12345", "ー", "23456"], 90.0)];
+        let result = extract_single_stage(&lines).unwrap();
+        assert_eq!(result, [12345, 23456, 0]);
     }
 
     #[test]

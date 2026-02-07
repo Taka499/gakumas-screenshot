@@ -18,6 +18,8 @@ use anyhow::{anyhow, Result};
 use chrono::Local;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -56,11 +58,24 @@ const MENU_CAPTURE_END_REF: usize = 1007;
 const MENU_GENERATE_CHARTS: usize = 1008;
 const MENU_EXIT: usize = 1003;
 
-/// Logs a message to both console and log file with timestamp.
+/// Path to the current session log file (set during automation runs).
+static SESSION_LOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Sets or clears the session log path. When set, `log()` writes to both
+/// the global log file and the session log file.
+pub fn set_session_log(path: Option<PathBuf>) {
+    if let Ok(mut p) = SESSION_LOG_PATH.lock() {
+        *p = path;
+    }
+}
+
+/// Logs a message to console, global log file, and optionally the session log file.
 pub fn log(msg: &str) {
     let timestamp = Local::now().format("%H:%M:%S%.3f");
     let line = format!("[{}] {}\n", timestamp, msg);
     print!("{}", line);
+
+    // Write to global log
     let log_path = paths::get_logs_dir().join("gakumas_screenshot.log");
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
@@ -68,6 +83,19 @@ pub fn log(msg: &str) {
         .open(&log_path)
     {
         let _ = file.write_all(line.as_bytes());
+    }
+
+    // Write to session log if active
+    if let Ok(guard) = SESSION_LOG_PATH.lock() {
+        if let Some(ref session_path) = *guard {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(session_path)
+            {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
     }
 }
 

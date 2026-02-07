@@ -127,6 +127,10 @@ pub fn start_automation(max_iterations: Option<u32>) -> Result<()> {
     // Store session path for GUI access
     set_current_session_path(session_dir.clone());
 
+    // Activate per-session logging
+    let session_log_path = session_dir.join("session.log");
+    crate::set_session_log(Some(session_log_path.clone()));
+
     // Setup paths within session folder
     let screenshot_dir = session_dir.join("screenshots");
     let csv_path = session_dir.join("results.csv");
@@ -245,6 +249,9 @@ fn run_automation_loop(
     }
 
     crate::log("All processing complete");
+
+    // Deactivate per-session logging
+    crate::set_session_log(None);
 }
 
 /// Re-export request_abort for convenience.

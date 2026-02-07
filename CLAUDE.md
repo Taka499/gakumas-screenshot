@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 When writing complex features or significant refactors, use an ExecPlan (as described in docs/PLANS.md) from design to implementation.
 
+When working on execution plans (ExecPlans), always read the full plan document completely before beginning any implementation or summarization. Confirm understanding by listing all milestones/phases before proceeding.
+
 
 ## Project Overview
 
@@ -34,18 +36,21 @@ powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 
 Multi-module Rust application with these key components:
 
-- **src/main.rs**: Entry point, system tray, hotkey handling
-- **src/paths.rs**: Centralized path resolution (logs/, screenshots/, template/, tesseract/)
+- **src/main.rs**: Entry point, initializes GUI or legacy tray mode
+- **src/paths.rs**: Centralized path resolution (logs/, screenshots/, output/, template/, tesseract/)
+- **src/gui/**: egui-based GUI window with progress display, controls, and guide images
 - **src/capture/**: Window discovery and screenshot capture via Windows Graphics Capture API
 - **src/automation/**: Rehearsal automation state machine, button detection, OCR worker
 - **src/calibration/**: Interactive calibration wizard for button positions
-- **src/ocr/**: Tesseract integration with embedded extraction
+- **src/ocr/**: Tesseract integration with per-stage crop→threshold→OCR→extract pipeline
+- **src/analysis/**: Statistics calculation and chart generation (plotters)
 
 Key technical details:
 - **Window Discovery**: `EnumWindows` + `QueryFullProcessImageNameW` to find target process
 - **Screen Capture**: Windows Graphics Capture (WGC) API via `IGraphicsCaptureItemInterop::CreateForWindow`
 - **GPU Pipeline**: D3D11 device creates staging texture, copies captured frame, maps for CPU read
 - **Embedded Tesseract**: `include_bytes!` embeds tesseract.zip, extracted on first run to exe directory
+- **OCR Pipeline**: Per-stage cropping (`score_regions` in config) → brightness thresholding → Tesseract `--psm 6` → regex extraction. Each stage processed independently to avoid cross-stage noise
 
 ## Key Constants and Hotkeys
 
@@ -76,6 +81,8 @@ Key technical details:
 ## Roadmap
 
 See `docs/ROADMAP_AUTOMATION.md` for the full automation feature roadmap. Current status:
-- UI automation (clicking buttons) - implemented
-- OCR integration (Tesseract) - implemented with embedded Tesseract
-- Statistics and visualization - CSV output implemented
+- Phase 1: UI automation (clicking buttons) - complete
+- Phase 2: OCR integration (Tesseract) - complete with embedded Tesseract
+- Phase 3: Automation loop - complete with state machine
+- Phase 4: Statistics and visualization - complete (CSV, charts, JSON)
+- Phase 5: User interface - in progress (egui GUI implemented)

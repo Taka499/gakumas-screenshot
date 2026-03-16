@@ -13,8 +13,11 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{IsWindow, SetForegroundWindow};
 
-use crate::automation::config::AutomationConfig;
-use crate::automation::detection::{wait_for_loading, wait_for_result, wait_for_start_page};
+use crate::automation::config::{AutomationConfig, RelativeRect};
+use crate::automation::detection::{
+    check_button_similarity, load_reference_histogram, wait_for_loading, wait_for_result,
+    wait_for_start_page, ReferenceImage,
+};
 use crate::automation::input::click_at_relative;
 use crate::automation::queue::OcrWorkItem;
 use crate::capture::capture_gakumas_to_buffer;
@@ -108,10 +111,18 @@ pub struct AutomationContext {
     pub start_time: Instant,
     /// Directory for saving screenshots
     pub screenshot_dir: PathBuf,
+    /// Pre-loaded Start button reference for post-click verification
+    start_button_ref: Option<ReferenceImage>,
+    /// Pre-loaded Skip button reference for post-click verification
+    skip_button_ref: Option<ReferenceImage>,
+    /// Pre-loaded End button reference for post-click verification
+    end_button_ref: Option<ReferenceImage>,
 }
 
 impl AutomationContext {
     /// Creates a new automation context.
+    ///
+    /// Pre-loads button reference images for post-click verification.
     pub fn new(
         hwnd: HWND,
         config: AutomationConfig,
@@ -119,6 +130,12 @@ impl AutomationContext {
         work_sender: Sender<OcrWorkItem>,
         screenshot_dir: PathBuf,
     ) -> Self {
+        let exe_dir = crate::paths::get_exe_dir();
+
+        let start_button_ref = load_ref_image(&exe_dir, &config.start_button_reference, "Start");
+        let skip_button_ref = load_ref_image(&exe_dir, &config.skip_button_reference, "Skip");
+        let end_button_ref = load_ref_image(&exe_dir, &config.end_button_reference, "End");
+
         Self {
             state: AutomationState::Idle,
             hwnd,
@@ -128,7 +145,70 @@ impl AutomationContext {
             work_sender,
             start_time: Instant::now(),
             screenshot_dir,
+            start_button_ref,
+            skip_button_ref,
+            end_button_ref,
         }
+    }
+
+    /// Clicks a button, then verifies it disappeared by checking histogram similarity.
+    ///
+    /// If the button is still visible after clicking, retries up to `max_click_retries` times.
+    /// Returns Ok(()) when the button is gone, or Err if all retries exhausted.
+    fn click_and_verify(
+        &self,
+        button_x: f32,
+        button_y: f32,
+        region: &RelativeRect,
+        ref_img: &ReferenceImage,
+        button_name: &str,
+    ) -> Result<()> {
+        let max_retries = self.config.max_click_retries;
+
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                crate::log(&format!(
+                    "Retry {}/{}: Clicking {} button again (still visible)",
+                    attempt, max_retries, button_name
+                ));
+            }
+
+            click_with_focus(self.hwnd, button_x, button_y)?;
+
+            // Wait for the page transition to complete before verifying
+            std::thread::sleep(Duration::from_millis(800));
+
+            // Check if button is gone
+            match check_button_similarity(self.hwnd, region, ref_img) {
+                Ok(similarity) => {
+                    if similarity < self.config.histogram_threshold {
+                        crate::log(&format!(
+                            "{} button gone after click (similarity = {:.3})",
+                            button_name, similarity
+                        ));
+                        return Ok(());
+                    }
+                    crate::log(&format!(
+                        "{} button still visible after click (similarity = {:.3})",
+                        button_name, similarity
+                    ));
+                }
+                Err(e) => {
+                    crate::log(&format!(
+                        "Warning: Failed to verify {} button click: {}",
+                        button_name, e
+                    ));
+                    // Can't verify, assume click worked
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "{} button still visible after {} retries",
+            button_name,
+            max_retries
+        ))
     }
 
     /// Advances the state machine by one step.
@@ -191,13 +271,26 @@ impl AutomationContext {
                     self.current_iteration, self.max_iterations
                 ));
 
-                if let Err(e) = click_with_focus(
-                    self.hwnd,
-                    self.config.start_button.x,
-                    self.config.start_button.y,
-                ) {
-                    self.state = AutomationState::Error(format!("Failed to click Start: {}", e));
-                    return Ok(false);
+                if let Some(ref ref_img) = self.start_button_ref {
+                    if let Err(e) = self.click_and_verify(
+                        self.config.start_button.x,
+                        self.config.start_button.y,
+                        &self.config.start_button_region.clone(),
+                        ref_img,
+                        "Start",
+                    ) {
+                        self.state = AutomationState::Error(format!("Failed to click Start: {}", e));
+                        return Ok(false);
+                    }
+                } else {
+                    if let Err(e) = click_with_focus(
+                        self.hwnd,
+                        self.config.start_button.x,
+                        self.config.start_button.y,
+                    ) {
+                        self.state = AutomationState::Error(format!("Failed to click Start: {}", e));
+                        return Ok(false);
+                    }
                 }
 
                 self.state = AutomationState::WaitingForLoading;
@@ -235,13 +328,26 @@ impl AutomationContext {
                     self.current_iteration, self.max_iterations
                 ));
 
-                if let Err(e) = click_with_focus(
-                    self.hwnd,
-                    self.config.skip_button.x,
-                    self.config.skip_button.y,
-                ) {
-                    self.state = AutomationState::Error(format!("Failed to click Skip: {}", e));
-                    return Ok(false);
+                if let Some(ref ref_img) = self.skip_button_ref {
+                    if let Err(e) = self.click_and_verify(
+                        self.config.skip_button.x,
+                        self.config.skip_button.y,
+                        &self.config.skip_button_region.clone(),
+                        ref_img,
+                        "Skip",
+                    ) {
+                        self.state = AutomationState::Error(format!("Failed to click Skip: {}", e));
+                        return Ok(false);
+                    }
+                } else {
+                    if let Err(e) = click_with_focus(
+                        self.hwnd,
+                        self.config.skip_button.x,
+                        self.config.skip_button.y,
+                    ) {
+                        self.state = AutomationState::Error(format!("Failed to click Skip: {}", e));
+                        return Ok(false);
+                    }
                 }
 
                 self.state = AutomationState::WaitingForResult;
@@ -325,17 +431,29 @@ impl AutomationContext {
                     self.current_iteration, self.max_iterations
                 ));
 
-                if let Err(e) = click_with_focus(
-                    self.hwnd,
-                    self.config.end_button.x,
-                    self.config.end_button.y,
-                ) {
-                    self.state = AutomationState::Error(format!("Failed to click End: {}", e));
-                    return Ok(false);
+                if let Some(ref ref_img) = self.end_button_ref {
+                    if let Err(e) = self.click_and_verify(
+                        self.config.end_button.x,
+                        self.config.end_button.y,
+                        &self.config.end_button_region.clone(),
+                        ref_img,
+                        "End",
+                    ) {
+                        self.state = AutomationState::Error(format!("Failed to click End: {}", e));
+                        return Ok(false);
+                    }
+                } else {
+                    if let Err(e) = click_with_focus(
+                        self.hwnd,
+                        self.config.end_button.x,
+                        self.config.end_button.y,
+                    ) {
+                        self.state = AutomationState::Error(format!("Failed to click End: {}", e));
+                        return Ok(false);
+                    }
+                    // Fallback delay when no reference image for verification
+                    std::thread::sleep(Duration::from_millis(500));
                 }
-
-                // Small delay to let the page transition start
-                std::thread::sleep(Duration::from_millis(500));
 
                 self.state = AutomationState::CheckingLoop;
                 Ok(true)
@@ -373,6 +491,35 @@ impl AutomationContext {
             AutomationState::Error(msg) => format!("Error: {}", msg),
             AutomationState::Aborted => "Aborted".to_string(),
             _ => format!("{}/{} - {}", self.current_iteration, self.max_iterations, self.state),
+        }
+    }
+}
+
+/// Tries to load a reference image for post-click verification.
+/// Returns None with a log message if the image doesn't exist or fails to load.
+fn load_ref_image(
+    exe_dir: &std::path::Path,
+    relative_path: &str,
+    button_name: &str,
+) -> Option<ReferenceImage> {
+    let path = exe_dir.join(relative_path);
+    if !path.exists() {
+        return None;
+    }
+    match load_reference_histogram(&path) {
+        Ok(ref_img) => {
+            crate::log(&format!(
+                "Pre-loaded {} button reference for click verification",
+                button_name
+            ));
+            Some(ref_img)
+        }
+        Err(e) => {
+            crate::log(&format!(
+                "Warning: Failed to load {} button reference: {}",
+                button_name, e
+            ));
+            None
         }
     }
 }

@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
 
-use crate::automation::config::AutomationConfig;
+use crate::automation::config::{AutomationConfig, RelativeRect};
 use crate::automation::state::ABORT_REQUESTED;
 use crate::capture::region::capture_region;
 
@@ -192,6 +192,8 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     // Phase 1: Wait for Skip button to appear (if reference exists)
     if let Some(ref ref_img) = reference {
         crate::log("Phase 1: Waiting for Skip button to appear...");
+        let confirm_needed = config.detection_confirm_count.max(1);
+        let mut consecutive_matches: u32 = 0;
         loop {
             if ABORT_REQUESTED.load(Ordering::SeqCst) {
                 return Err(anyhow!("Abort requested"));
@@ -210,14 +212,29 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
             let current_hist = calculate_histogram(&resized);
             let similarity = histogram_similarity(&ref_img.histogram, &current_hist);
 
-            crate::log(&format!(
-                "Phase 1: similarity = {:.3} (threshold = {:.3})",
-                similarity, config.histogram_threshold
-            ));
-
             if similarity >= config.histogram_threshold {
-                crate::log("Skip button detected (histogram match)");
-                break;
+                consecutive_matches += 1;
+                crate::log(&format!(
+                    "Phase 1: similarity = {:.3} - match {}/{} (threshold = {:.3})",
+                    similarity, consecutive_matches, confirm_needed, config.histogram_threshold
+                ));
+                if consecutive_matches >= confirm_needed {
+                    crate::log("Skip button detected (histogram match confirmed)");
+                    break;
+                }
+            } else {
+                if consecutive_matches > 0 {
+                    crate::log(&format!(
+                        "Phase 1: similarity = {:.3} - match streak reset (threshold = {:.3})",
+                        similarity, config.histogram_threshold
+                    ));
+                } else {
+                    crate::log(&format!(
+                        "Phase 1: similarity = {:.3} (threshold = {:.3})",
+                        similarity, config.histogram_threshold
+                    ));
+                }
+                consecutive_matches = 0;
             }
 
             std::thread::sleep(Duration::from_millis(100));
@@ -319,6 +336,8 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
 
     // Wait for End button to appear (histogram comparison)
     crate::log("Waiting for End button to appear (result page)...");
+    let confirm_needed = config.detection_confirm_count.max(1);
+    let mut consecutive_matches: u32 = 0;
     loop {
         if ABORT_REQUESTED.load(Ordering::SeqCst) {
             return Err(anyhow!("Abort requested"));
@@ -337,14 +356,29 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
         let current_hist = calculate_histogram(&resized);
         let similarity = histogram_similarity(&ref_img.histogram, &current_hist);
 
-        crate::log(&format!(
-            "Result page detection: similarity = {:.3} (threshold = {:.3})",
-            similarity, config.histogram_threshold
-        ));
-
         if similarity >= config.histogram_threshold {
-            crate::log("End button detected (result page loaded)");
-            return Ok(());
+            consecutive_matches += 1;
+            crate::log(&format!(
+                "Result page detection: similarity = {:.3} - match {}/{} (threshold = {:.3})",
+                similarity, consecutive_matches, confirm_needed, config.histogram_threshold
+            ));
+            if consecutive_matches >= confirm_needed {
+                crate::log("End button detected (result page loaded, confirmed)");
+                return Ok(());
+            }
+        } else {
+            if consecutive_matches > 0 {
+                crate::log(&format!(
+                    "Result page detection: similarity = {:.3} - match streak reset (threshold = {:.3})",
+                    similarity, config.histogram_threshold
+                ));
+            } else {
+                crate::log(&format!(
+                    "Result page detection: similarity = {:.3} (threshold = {:.3})",
+                    similarity, config.histogram_threshold
+                ));
+            }
+            consecutive_matches = 0;
         }
 
         std::thread::sleep(Duration::from_millis(100));
@@ -401,6 +435,8 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
 
     // Wait for Start button to appear (histogram comparison)
     crate::log("Waiting for Start button to appear (rehearsal page)...");
+    let confirm_needed = config.detection_confirm_count.max(1);
+    let mut consecutive_matches: u32 = 0;
     loop {
         if ABORT_REQUESTED.load(Ordering::SeqCst) {
             return Err(anyhow!("Abort requested"));
@@ -419,16 +455,46 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
         let current_hist = calculate_histogram(&resized);
         let similarity = histogram_similarity(&ref_img.histogram, &current_hist);
 
-        crate::log(&format!(
-            "Rehearsal page detection: similarity = {:.3} (threshold = {:.3})",
-            similarity, config.histogram_threshold
-        ));
-
         if similarity >= config.histogram_threshold {
-            crate::log("Start button detected (rehearsal page loaded)");
-            return Ok(());
+            consecutive_matches += 1;
+            crate::log(&format!(
+                "Rehearsal page detection: similarity = {:.3} - match {}/{} (threshold = {:.3})",
+                similarity, consecutive_matches, confirm_needed, config.histogram_threshold
+            ));
+            if consecutive_matches >= confirm_needed {
+                crate::log("Start button detected (rehearsal page loaded, confirmed)");
+                return Ok(());
+            }
+        } else {
+            if consecutive_matches > 0 {
+                crate::log(&format!(
+                    "Rehearsal page detection: similarity = {:.3} - match streak reset (threshold = {:.3})",
+                    similarity, config.histogram_threshold
+                ));
+            } else {
+                crate::log(&format!(
+                    "Rehearsal page detection: similarity = {:.3} (threshold = {:.3})",
+                    similarity, config.histogram_threshold
+                ));
+            }
+            consecutive_matches = 0;
         }
 
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Checks the current histogram similarity of a button region against a reference image.
+///
+/// Returns the similarity score (0.0 to 1.0). Useful for post-click verification
+/// to check whether a button has disappeared from screen.
+pub fn check_button_similarity(
+    hwnd: HWND,
+    region: &RelativeRect,
+    ref_img: &ReferenceImage,
+) -> Result<f32> {
+    let region_img = capture_region(hwnd, region)?;
+    let resized = resize_to_match(&region_img, ref_img.dimensions.0, ref_img.dimensions.1);
+    let current_hist = calculate_histogram(&resized);
+    Ok(histogram_similarity(&ref_img.histogram, &current_hist))
 }

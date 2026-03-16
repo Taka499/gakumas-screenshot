@@ -98,6 +98,12 @@ pub struct AutomationConfig {
     /// Per-stage score regions for cropped OCR (3 stages)
     #[serde(default = "default_score_regions")]
     pub score_regions: [RelativeRect; 3],
+    /// Number of consecutive histogram matches required to confirm detection (default 3)
+    #[serde(default = "default_detection_confirm_count")]
+    pub detection_confirm_count: u32,
+    /// Maximum number of click retry attempts if button is still visible (default 3)
+    #[serde(default = "default_max_click_retries")]
+    pub max_click_retries: u32,
     /// Developer mode: when enabled, runs as tray app with advanced features
     #[serde(default)]
     pub developer_mode: bool,
@@ -156,6 +162,14 @@ fn default_end_button_reference() -> String {
     "resources/template/rehearsal/end_button_ref.png".to_string()
 }
 
+fn default_detection_confirm_count() -> u32 {
+    3 // Require 3 consecutive matches to confirm detection
+}
+
+fn default_max_click_retries() -> u32 {
+    3 // Retry clicking up to 3 times if button is still visible
+}
+
 fn default_result_timeout_ms() -> u64 {
     30000 // 30 seconds to wait for result page
 }
@@ -187,6 +201,8 @@ impl Default for AutomationConfig {
             test_click_position: ButtonConfig { x: 0.5, y: 0.5 },
             ocr_threshold: default_ocr_threshold(),
             score_regions: default_score_regions(),
+            detection_confirm_count: default_detection_confirm_count(),
+            max_click_retries: default_max_click_retries(),
             developer_mode: false,
         }
     }

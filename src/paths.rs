@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 static EXE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -36,6 +36,17 @@ pub fn get_tesseract_dir() -> PathBuf {
 /// Returns the output directory: `<exe_dir>/output/`
 pub fn get_output_dir() -> PathBuf {
     get_exe_dir().join("output")
+}
+
+/// Returns a display-friendly path string relative to the exe directory.
+///
+/// Strips the exe directory prefix so logs don't leak the user's full file path.
+/// Falls back to the full path if stripping fails.
+pub fn relative_display(path: &Path) -> String {
+    path.strip_prefix(get_exe_dir())
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 /// Ensures all output directories exist. Call at startup.

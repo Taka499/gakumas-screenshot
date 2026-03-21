@@ -214,7 +214,7 @@ fn load_config() -> AutomationConfig {
     // Try to find config.json next to the executable
     let config_path = crate::paths::get_exe_dir().join("config.json");
 
-    crate::log(&format!("Looking for config at: {}", config_path.display()));
+    crate::log(&format!("Looking for config at: {}", crate::paths::relative_display(&config_path)));
 
     if config_path.exists() {
         match fs::read_to_string(config_path) {

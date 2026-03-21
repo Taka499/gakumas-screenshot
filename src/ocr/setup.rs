@@ -23,7 +23,7 @@ pub fn ensure_tesseract() -> Result<TesseractPaths> {
 
     // Check if already extracted
     if executable.exists() && eng_traineddata.exists() {
-        log(&format!("Tesseract found at: {}", tesseract_dir.display()));
+        log(&format!("Tesseract found at: {}", crate::paths::relative_display(&tesseract_dir)));
         return Ok(TesseractPaths {
             executable,
             tessdata: tessdata_dir,
@@ -49,7 +49,7 @@ pub fn ensure_tesseract() -> Result<TesseractPaths> {
 
     log(&format!(
         "Tesseract extracted to: {}",
-        tesseract_dir.display()
+        crate::paths::relative_display(&tesseract_dir)
     ));
 
     Ok(TesseractPaths {

@@ -121,7 +121,7 @@ impl ChartConfig {
             match fs::read_to_string(config_path) {
                 Ok(content) => match serde_json::from_str(&content) {
                     Ok(config) => {
-                        crate::log(&format!("Loaded chart config from {}", config_path.display()));
+                        crate::log(&format!("Loaded chart config from {}", crate::paths::relative_display(config_path)));
                         return config;
                     }
                     Err(e) => {

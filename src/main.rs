@@ -346,7 +346,7 @@ unsafe extern "system" fn window_proc(
                 if hotkey_id == HOTKEY_ID {
                     log("Hotkey pressed! Capturing...");
                     match capture::capture_gakumas() {
-                        Ok(path) => log(&format!("Screenshot saved: {}", path.display())),
+                        Ok(path) => log(&format!("Screenshot saved: {}", paths::relative_display(&path))),
                         Err(e) => log(&format!("Capture failed: {}", e)),
                     }
                 } else if hotkey_id == HOTKEY_CLICK_TEST {
@@ -640,7 +640,7 @@ fn capture_start_reference() {
         Ok(()) => {
             log(&format!(
                 "Start button reference saved to {}",
-                ref_path.display()
+                paths::relative_display(&ref_path)
             ));
             log("The automation will now use this image to detect when the Start button (rehearsal page) appears.");
         }
@@ -672,7 +672,7 @@ fn capture_skip_reference() {
         Ok(()) => {
             log(&format!(
                 "Skip button reference saved to {}",
-                ref_path.display()
+                paths::relative_display(&ref_path)
             ));
             log("The automation will now use this image to detect when the Skip button appears.");
         }
@@ -704,7 +704,7 @@ fn capture_end_reference() {
         Ok(()) => {
             log(&format!(
                 "End button reference saved to {}",
-                ref_path.display()
+                paths::relative_display(&ref_path)
             ));
             log("The automation will now use this image to detect when the result page appears.");
         }
@@ -720,9 +720,9 @@ fn generate_charts() {
         Ok((chart_paths, json_path)) => {
             log("Charts generated successfully!");
             for path in &chart_paths {
-                log(&format!("  Chart: {}", path.display()));
+                log(&format!("  Chart: {}", paths::relative_display(path)));
             }
-            log(&format!("  Statistics: {}", json_path.display()));
+            log(&format!("  Statistics: {}", paths::relative_display(&json_path)));
         }
         Err(e) => {
             log(&format!("Failed to generate charts: {}", e));

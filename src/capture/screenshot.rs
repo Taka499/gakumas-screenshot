@@ -219,7 +219,7 @@ pub fn capture_gakumas() -> Result<PathBuf> {
     let path = crate::paths::get_screenshots_dir().join(&filename);
 
     img.save(&path)?;
-    crate::log(&format!("Saved to {}", path.display()));
+    crate::log(&format!("Saved to {}", crate::paths::relative_display(&path)));
 
     Ok(path)
 }

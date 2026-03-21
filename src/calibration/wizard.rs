@@ -557,7 +557,7 @@ fn finish_calibration(items: CalibrationItems, game_hwnd: HWND) -> Result<()> {
 
     let json = serde_json::to_string_pretty(&final_config)?;
     std::fs::write(&config_path, &json)?;
-    log(&format!("Config saved to: {}", config_path.display()));
+    log(&format!("Config saved to: {}", crate::paths::relative_display(&config_path)));
 
     // Show final preview
     log("Generating final preview...");

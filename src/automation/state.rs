@@ -411,7 +411,7 @@ impl AutomationContext {
                     "Iteration {}/{}: Screenshot saved to {}",
                     self.current_iteration,
                     self.max_iterations,
-                    screenshot_path.display()
+                    crate::paths::relative_display(&screenshot_path)
                 ));
 
                 // Queue for OCR processing

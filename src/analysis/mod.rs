@@ -36,7 +36,7 @@ pub fn generate_analysis_for_session(session_dir: &Path) -> Result<(Vec<PathBuf>
     // Create charts directory if it doesn't exist
     if !charts_dir.exists() {
         std::fs::create_dir_all(&charts_dir)?;
-        crate::log(&format!("Created charts directory: {}", charts_dir.display()));
+        crate::log(&format!("Created charts directory: {}", crate::paths::relative_display(&charts_dir)));
     }
 
     // Load chart config (creates default if not exists)
@@ -49,7 +49,7 @@ pub fn generate_analysis_for_session(session_dir: &Path) -> Result<(Vec<PathBuf>
         } else {
             crate::log(&format!(
                 "Created default chart_config.json at {}",
-                config_path.display()
+                crate::paths::relative_display(&config_path)
             ));
         }
     }
@@ -74,12 +74,12 @@ pub fn generate_analysis_for_session(session_dir: &Path) -> Result<(Vec<PathBuf>
     chart_paths.push(combined_chart_path.clone());
     crate::log(&format!(
         "Generated combined box plot: {}",
-        combined_chart_path.display()
+        crate::paths::relative_display(&combined_chart_path)
     ));
 
     // Export JSON
     export::export_to_json(&stats, &json_path)?;
-    crate::log(&format!("Statistics JSON saved: {}", json_path.display()));
+    crate::log(&format!("Statistics JSON saved: {}", crate::paths::relative_display(&json_path)));
 
     Ok((chart_paths, json_path))
 }
@@ -111,7 +111,7 @@ pub fn generate_analysis() -> Result<(Vec<PathBuf>, PathBuf)> {
     // Create output directory if it doesn't exist
     if !output_dir.exists() {
         std::fs::create_dir_all(&output_dir)?;
-        crate::log(&format!("Created output directory: {}", output_dir.display()));
+        crate::log(&format!("Created output directory: {}", crate::paths::relative_display(&output_dir)));
     }
 
     // Load chart config

@@ -32,7 +32,7 @@ pub fn run_ocr_worker(
                 crate::log(&format!(
                     "OCR worker: processing iteration {} ({})",
                     work_item.iteration,
-                    work_item.screenshot_path.display()
+                    crate::paths::relative_display(&work_item.screenshot_path)
                 ));
 
                 // Load screenshot from disk
@@ -41,7 +41,7 @@ pub fn run_ocr_worker(
                     Err(e) => {
                         crate::log(&format!(
                             "OCR worker: failed to load {}: {}",
-                            work_item.screenshot_path.display(),
+                            crate::paths::relative_display(&work_item.screenshot_path),
                             e
                         ));
                         continue; // Skip this item, continue with next

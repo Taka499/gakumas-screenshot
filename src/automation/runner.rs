@@ -156,9 +156,9 @@ pub fn start_automation(max_iterations: Option<u32>) -> Result<()> {
         "Starting automation: {} iterations (Ctrl+Shift+Q to abort)",
         iterations
     ));
-    crate::log(&format!("Session folder: {}", session_dir.display()));
-    crate::log(&format!("Screenshots: {}", screenshot_dir.display()));
-    crate::log(&format!("Results CSV: {}", csv_path.display()));
+    crate::log(&format!("Session folder: {}", crate::paths::relative_display(&session_dir)));
+    crate::log(&format!("Screenshots: {}", crate::paths::relative_display(&screenshot_dir)));
+    crate::log(&format!("Results CSV: {}", crate::paths::relative_display(&csv_path)));
 
     // Extract raw pointer value to pass across thread boundary
     // SAFETY: HWND is just a pointer wrapper, and Windows handles are valid

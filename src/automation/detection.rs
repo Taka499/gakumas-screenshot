@@ -126,7 +126,7 @@ pub fn save_start_button_reference(hwnd: HWND, config: &AutomationConfig, path: 
     let region_img = capture_region(hwnd, &config.start_button_region)?;
     region_img.save(path)
         .map_err(|e| anyhow!("Failed to save reference image: {}", e))?;
-    crate::log(&format!("Saved Start button reference to {}", path.display()));
+    crate::log(&format!("Saved Start button reference to {}", crate::paths::relative_display(path)));
     Ok(())
 }
 
@@ -135,7 +135,7 @@ pub fn save_skip_button_reference(hwnd: HWND, config: &AutomationConfig, path: &
     let region_img = capture_region(hwnd, &config.skip_button_region)?;
     region_img.save(path)
         .map_err(|e| anyhow!("Failed to save reference image: {}", e))?;
-    crate::log(&format!("Saved Skip button reference to {}", path.display()));
+    crate::log(&format!("Saved Skip button reference to {}", crate::paths::relative_display(path)));
     Ok(())
 }
 
@@ -144,7 +144,7 @@ pub fn save_end_button_reference(hwnd: HWND, config: &AutomationConfig, path: &P
     let region_img = capture_region(hwnd, &config.end_button_region)?;
     region_img.save(path)
         .map_err(|e| anyhow!("Failed to save reference image: {}", e))?;
-    crate::log(&format!("Saved End button reference to {}", path.display()));
+    crate::log(&format!("Saved End button reference to {}", crate::paths::relative_display(path)));
     Ok(())
 }
 
@@ -166,7 +166,7 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
             Ok(ref_img) => {
                 crate::log(&format!(
                     "Loaded Skip button reference from {} ({}x{})",
-                    ref_path.display(),
+                    crate::paths::relative_display(&ref_path),
                     ref_img.dimensions.0,
                     ref_img.dimensions.1
                 ));
@@ -183,7 +183,7 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     } else {
         crate::log(&format!(
             "Warning: Reference image {} not found. Using brightness-only detection.",
-            ref_path.display()
+            crate::paths::relative_display(&ref_path)
         ));
         crate::log("Hint: Use 'Capture Skip Reference' from tray menu to create it.");
         None
@@ -299,7 +299,7 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
             Ok(ref_img) => {
                 crate::log(&format!(
                     "Loaded End button reference from {} ({}x{})",
-                    ref_path.display(),
+                    crate::paths::relative_display(&ref_path),
                     ref_img.dimensions.0,
                     ref_img.dimensions.1
                 ));
@@ -316,7 +316,7 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
     } else {
         crate::log(&format!(
             "Warning: End button reference {} not found. Using fixed delay.",
-            ref_path.display()
+            crate::paths::relative_display(&ref_path)
         ));
         crate::log("Hint: Use 'Capture End Reference' from tray menu to create it.");
         None
@@ -403,7 +403,7 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
             Ok(ref_img) => {
                 crate::log(&format!(
                     "Loaded Start button reference from {} ({}x{})",
-                    ref_path.display(),
+                    crate::paths::relative_display(&ref_path),
                     ref_img.dimensions.0,
                     ref_img.dimensions.1
                 ));
@@ -420,7 +420,7 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
     } else {
         crate::log(&format!(
             "Warning: Start button reference {} not found. Skipping page detection.",
-            ref_path.display()
+            crate::paths::relative_display(&ref_path)
         ));
         crate::log("Hint: Use 'Capture Start Reference' from tray menu to create it.");
         None

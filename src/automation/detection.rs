@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HWND;
 
 use crate::automation::config::{AutomationConfig, RelativeRect};
+use crate::automation::input::click_at_relative;
 use crate::automation::state::ABORT_REQUESTED;
 use crate::capture::region::capture_region;
 
@@ -90,6 +91,76 @@ pub struct ReferenceImage {
     pub dimensions: (u32, u32),
 }
 
+/// Information needed to retry a click on the *previous* button during detection polling.
+///
+/// When a detection function polls for a new page element, it can optionally check
+/// whether the previous button is still visible and retry the click if needed.
+/// This eliminates the blocking 800ms verification wait after each click.
+pub struct ClickRetryInfo<'a> {
+    /// Window handle for clicking and capturing
+    pub hwnd: HWND,
+    /// Relative X position of the button to retry
+    pub button_x: f32,
+    /// Relative Y position of the button to retry
+    pub button_y: f32,
+    /// Region to capture for similarity check
+    pub button_region: &'a RelativeRect,
+    /// Reference image to compare against
+    pub ref_img: &'a ReferenceImage,
+    /// Similarity threshold above which the button is considered still visible
+    pub histogram_threshold: f32,
+    /// Maximum number of retry clicks allowed
+    pub max_retries: u32,
+}
+
+/// Checks if the previous button is still visible and retries the click if needed.
+///
+/// Returns `true` if a retry click was performed, `false` otherwise.
+fn maybe_retry_click(
+    info: &ClickRetryInfo<'_>,
+    elapsed_since_click: Duration,
+    retries_used: &mut u32,
+) -> bool {
+    // Only check after 2 seconds have passed since the last click
+    if elapsed_since_click < Duration::from_secs(2) {
+        return false;
+    }
+
+    // No retries remaining
+    if *retries_used >= info.max_retries {
+        return false;
+    }
+
+    // Check if previous button is still visible
+    match check_button_similarity(info.hwnd, info.button_region, info.ref_img) {
+        Ok(similarity) => {
+            if similarity >= info.histogram_threshold {
+                *retries_used += 1;
+                crate::log(&format!(
+                    "Previous button still visible (similarity = {:.3}), retry click {}/{}",
+                    similarity, *retries_used, info.max_retries
+                ));
+                if let Err(e) = click_at_relative(info.hwnd, info.button_x, info.button_y) {
+                    crate::log(&format!("Warning: Retry click failed: {}", e));
+                }
+                true
+            } else {
+                crate::log(&format!(
+                    "Previous button gone (similarity = {:.3}), no retry needed",
+                    similarity
+                ));
+                false
+            }
+        }
+        Err(e) => {
+            crate::log(&format!(
+                "Warning: Could not check previous button: {}", e
+            ));
+            false
+        }
+    }
+}
+
 /// Loads a reference image from disk and returns its histogram and dimensions.
 ///
 /// The dimensions are stored so captured regions can be resized to match,
@@ -154,9 +225,15 @@ pub fn save_end_button_reference(hwnd: HWND, config: &AutomationConfig, path: &P
 /// Phase 2: Wait for Skip button to become enabled (brightness exceeds threshold)
 ///
 /// If no reference image exists, falls back to brightness-only detection.
-pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
+pub fn wait_for_loading(
+    hwnd: HWND,
+    config: &AutomationConfig,
+    click_retry: Option<ClickRetryInfo<'_>>,
+) -> Result<()> {
     let start = Instant::now();
     let timeout = Duration::from_millis(config.loading_timeout_ms);
+    let mut retries_used: u32 = 0;
+    let last_click_time = Instant::now();
 
     // Try to load reference histogram
     let ref_path = crate::paths::get_exe_dir().join(&config.skip_button_reference);
@@ -235,6 +312,11 @@ pub fn wait_for_loading(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
                     ));
                 }
                 consecutive_matches = 0;
+
+                // Retry previous button click if needed (only in Phase 1)
+                if let Some(ref retry_info) = click_retry {
+                    maybe_retry_click(retry_info, last_click_time.elapsed(), &mut retries_used);
+                }
             }
 
             std::thread::sleep(Duration::from_millis(100));
@@ -287,9 +369,15 @@ pub fn measure_region_brightness(hwnd: HWND, config: &AutomationConfig) -> Resul
 /// Returns Ok(()) when the End button is detected, or Err on timeout or abort.
 ///
 /// If no reference image exists, falls back to a fixed delay.
-pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
+pub fn wait_for_result(
+    hwnd: HWND,
+    config: &AutomationConfig,
+    click_retry: Option<ClickRetryInfo<'_>>,
+) -> Result<()> {
     let start = Instant::now();
     let timeout = Duration::from_millis(config.result_timeout_ms);
+    let mut retries_used: u32 = 0;
+    let last_click_time = Instant::now();
 
     // Try to load reference histogram
     let ref_path = crate::paths::get_exe_dir().join(&config.end_button_reference);
@@ -379,6 +467,11 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
                 ));
             }
             consecutive_matches = 0;
+
+            // Retry previous button click if needed
+            if let Some(ref retry_info) = click_retry {
+                maybe_retry_click(retry_info, last_click_time.elapsed(), &mut retries_used);
+            }
         }
 
         std::thread::sleep(Duration::from_millis(100));
@@ -391,9 +484,15 @@ pub fn wait_for_result(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
 /// Returns Ok(()) when the Start button is detected, or Err on timeout or abort.
 ///
 /// If no reference image exists, returns immediately (assumes page is ready).
-pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> {
+pub fn wait_for_start_page(
+    hwnd: HWND,
+    config: &AutomationConfig,
+    click_retry: Option<ClickRetryInfo<'_>>,
+) -> Result<()> {
     let start = Instant::now();
     let timeout = Duration::from_millis(config.loading_timeout_ms);
+    let mut retries_used: u32 = 0;
+    let last_click_time = Instant::now();
 
     // Try to load reference histogram
     let ref_path = crate::paths::get_exe_dir().join(&config.start_button_reference);
@@ -478,6 +577,11 @@ pub fn wait_for_start_page(hwnd: HWND, config: &AutomationConfig) -> Result<()> 
                 ));
             }
             consecutive_matches = 0;
+
+            // Retry previous button click if needed
+            if let Some(ref retry_info) = click_retry {
+                maybe_retry_click(retry_info, last_click_time.elapsed(), &mut retries_used);
+            }
         }
 
         std::thread::sleep(Duration::from_millis(100));

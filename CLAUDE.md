@@ -8,6 +8,10 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 When working on execution plans (ExecPlans), always read the full plan document completely before beginning any implementation or summarization. Confirm understanding by listing all milestones/phases before proceeding.
 
+Active ExecPlans (keep their `Progress` sections current; each is self-contained):
+- `docs/EXECPLAN_RESUME_AUTOMATION.md` - resume an interrupted automation run. Complete (committed d968a4a, acceptance passed).
+- `docs/EXECPLAN_GUI_STATE_DRIVEN_PANEL.md` - redesign the GUI third column into a state-driven control panel. Not started; M1 (scroll) then M2 (state-driven panel). See its Progress section for status.
+
 
 ## Project Overview
 
@@ -20,6 +24,8 @@ Windows screenshot tool that captures the client area of `gakumas.exe` using Win
 - Never add Claude Code attribution in commit
 
 ## Build Commands
+
+Build emits ~30 expected warnings (unused `pub use` re-exports, OCR dead code); these are not regressions. Filter with `cargo check 2>&1 | grep "^error"` to find real failures.
 
 ```powershell
 # Build release (optimized with LTO)
@@ -40,7 +46,7 @@ Multi-module Rust application with these key components:
 - **src/paths.rs**: Centralized path resolution (logs/, screenshots/, output/, template/, tesseract/)
 - **src/gui/**: egui-based GUI window with progress display, controls, and guide images
 - **src/capture/**: Window discovery and screenshot capture via Windows Graphics Capture API
-- **src/automation/**: Rehearsal automation state machine, button detection, OCR worker
+- **src/automation/**: Rehearsal automation state machine, button detection, OCR worker, session metadata/resume (`session_meta.rs`)
 - **src/calibration/**: Interactive calibration wizard for button positions
 - **src/ocr/**: Tesseract integration with per-stage crop→threshold→OCR→extract pipeline
 - **src/analysis/**: Statistics calculation and chart generation (plotters)
@@ -51,6 +57,7 @@ Key technical details:
 - **GPU Pipeline**: D3D11 device creates staging texture, copies captured frame, maps for CPU read
 - **Embedded Tesseract**: `include_bytes!` embeds tesseract.zip, extracted on first run to exe directory
 - **OCR Pipeline**: Per-stage cropping (`score_regions` in config) → brightness thresholding → Tesseract `--psm 6` → sanitize leading garbage chars → regex extraction. Each stage processed independently to avoid cross-stage noise. Crop regions are tightened to exclude horizontal UI divider lines that confuse Tesseract layout analysis
+- **Session folders**: Each automation series writes to `output/YYYYMMDD_HHMMSS/` holding `screenshots/`, `results.csv`, `session.log`, `charts/`, and `run-meta.json`. `run-meta.json` (written by `session_meta.rs`) records `total`/`completed`/`status` so an interrupted series can resume into the same folder; `completed` is authoritatively recomputed from the screenshot count (crash-proof), not trusted from the file
 
 ## Key Constants and Hotkeys
 
@@ -85,4 +92,4 @@ See `docs/ROADMAP_AUTOMATION.md` for the full automation feature roadmap. Curren
 - Phase 2: OCR integration (Tesseract) - complete with embedded Tesseract
 - Phase 3: Automation loop - complete with state machine
 - Phase 4: Statistics and visualization - complete (CSV, charts, JSON)
-- Phase 5: User interface - in progress (egui GUI implemented)
+- Phase 5: User interface - in progress (egui GUI implemented; resume of interrupted runs added; third-column UI redesign pending, see Active ExecPlans)

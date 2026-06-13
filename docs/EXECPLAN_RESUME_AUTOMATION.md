@@ -20,7 +20,7 @@ You can see it working like this: start a series of 5 runs, abort after 2, obser
 - [x] (2026-06-13) M1: Persisted session metadata module `src/automation/session_meta.rs` (write/read `run-meta.json`, `count_captured`, `list_resumable`). Registered in `mod.rs`; `cargo check` clean.
 - [x] (2026-06-13) M2: Resume-capable engine: `start_iteration` in the state machine; `resume_automation` + `start_automation_inner` in the runner; metadata writes at start and end. `cargo check` clean (only an expected `unused import: resume_automation` warning until M3 wires it).
 - [x] (2026-06-13) M3: GUI quick "Continue last run" button driven by in-memory status. `resumable()` helper, `render_controls` returns 3-tuple, `handle_continue` wired in `update()`. `cargo check` clean.
-- [x] (2026-06-13) M4: GUI "resume a previous session" picker driven by on-disk metadata (restart survival). `render_resume_picker`, `scan_resumable_sessions` (called in `new`, on finalize, on 更新), `handle_resume_selected`. `cargo build --release` succeeds; binary at `target\release\gakumas-screenshot.exe`. **Pending: manual acceptance scenarios A–D require the running game.**
+- [x] (2026-06-13) M4: GUI "resume a previous session" picker driven by on-disk metadata (restart survival). `render_resume_picker`, `scan_resumable_sessions` (called in `new`, on finalize, on 更新), `handle_resume_selected`. `cargo build --release` succeeds; binary at `target\release\gakumas-screenshot.exe`. Manual acceptance scenarios A–D confirmed passing by the user (2026-06-13).
 
 Use timestamps (UTC) when checking off items, e.g. `- [x] (2026-06-06 14:00Z) ...`.
 
@@ -50,7 +50,8 @@ Use timestamps (UTC) when checking off items, e.g. `- [x] (2026-06-06 14:00Z) ..
 
 To be completed at the end of each milestone and at full completion. Compare against Purpose: can the user resume an interrupted series in-session and after restart, with unified output?
 
-- 2026-06-13: M1–M4 implemented as specified in the plan; the prerequisite reporting work was confirmed present before starting. Compile gate met at each milestone (`cargo check` clean for M1–M3, `cargo build --release` clean for M4 — only pre-existing-style unused `pub use` warnings remain, including the intentional `resume_automation` re-export from M2). Behavioral acceptance (Scenarios A–D) is still **pending** — those require the running `gakumas.exe` and admin elevation, which cannot be exercised from the build environment. Next step for the user: run `target\release\gakumas-screenshot.exe` elevated with the game on the rehearsal start page and walk Scenarios A–D.
+- 2026-06-13: M1–M4 implemented as specified in the plan; the prerequisite reporting work was confirmed present before starting. Compile gate met at each milestone (`cargo check` clean for M1–M3, `cargo build --release` clean for M4 — only pre-existing-style unused `pub use` warnings remain, including the intentional `resume_automation` re-export from M2).
+- 2026-06-13: Behavioral acceptance complete. The user ran the elevated binary against the live game and confirmed Scenarios A–D pass (in-session continue, restart-survival picker, timeout/error path resumable, and the negative/empty-picker case). Feature meets its Purpose: an interrupted series can be resumed both in-session and after an app restart, with unified output appended into the original session folder. Committed as d968a4a.
 
 ## Context and Orientation
 

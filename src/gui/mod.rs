@@ -416,6 +416,33 @@ impl GuiApp {
         }
     }
 
+    /// Return from any terminal state to Idle so the user can start a fresh run
+    /// (or reach the resume picker). Without this, a terminal state with no
+    /// resume affordance — e.g. a "game not running" error — would be a dead end.
+    fn handle_back_to_idle(&mut self) {
+        self.state.status = AutomationStatus::Idle;
+        // Re-scan so the picker reflects the current on-disk state: the
+        // just-finished run may now be resumable, or a dismissed one gone.
+        self.scan_resumable_sessions();
+        crate::log("GUI: Returned to idle");
+    }
+
+    /// Dismiss the selected interrupted session from the picker (marks it done
+    /// on disk via run-meta.json; the folder and its data are kept).
+    fn handle_dismiss_selected(&mut self) {
+        let chosen = self
+            .state
+            .selected_resume
+            .and_then(|i| self.state.resumable_sessions.get(i).cloned());
+        if let Some(s) = chosen {
+            if crate::automation::session_meta::dismiss_session(&s.path) {
+                crate::log(&format!("GUI: Dismissed session {}", s.path.display()));
+            }
+            self.state.selected_resume = None;
+            self.scan_resumable_sessions();
+        }
+    }
+
     /// Handle generate charts button click.
     fn handle_generate_charts(&self) {
         crate::log("GUI: Generating charts...");
@@ -502,6 +529,8 @@ impl eframe::App for GuiApp {
                             if actions.open_folder { self.handle_open_folder(); }
                             if actions.refresh_resumable { self.scan_resumable_sessions(); }
                             if actions.resume_selected { self.handle_resume_selected(); }
+                            if actions.back_to_idle { self.handle_back_to_idle(); }
+                            if actions.dismiss_selected { self.handle_dismiss_selected(); }
                         });
                 });
             });

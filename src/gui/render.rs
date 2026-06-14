@@ -53,6 +53,10 @@ pub struct PanelActions {
     pub open_folder: bool,
     pub refresh_resumable: bool,
     pub resume_selected: bool,
+    /// Return from a terminal state to Idle (start a fresh run / reach the picker).
+    pub back_to_idle: bool,
+    /// Dismiss the session at `state.selected_resume` from the resume picker.
+    pub dismiss_selected: bool,
 }
 
 /// Renders the entire third column as a single state-driven panel: only the
@@ -164,6 +168,18 @@ fn render_finished(
     status: &AutomationStatus,
     actions: &mut PanelActions,
 ) {
+    // Always offer a way back to Idle. Without this, a terminal state (notably a
+    // "game not running" error with no session) would be a dead end: no Start
+    // (idle-only) and possibly no 続行, leaving the panel unmanipulable.
+    if ui
+        .button("← 戻る")
+        .on_hover_text("待機中に戻り、新しい実行を開始できます")
+        .clicked()
+    {
+        actions.back_to_idle = true;
+    }
+    ui.add_space(8.0);
+
     let (heading, color) = match status {
         AutomationStatus::Completed { .. } => ("完了", Color32::from_rgb(0, 150, 0)),
         AutomationStatus::Aborted { .. } => ("中断", Color32::from_rgb(200, 150, 0)),
@@ -180,16 +196,19 @@ fn render_finished(
     if let Some((completed, total, _)) = status.resumable() {
         let remaining = total.saturating_sub(completed);
         ui.add_space(12.0);
+        // Prominent instruction: the user must return to the ② screen first.
+        ui.label(
+            RichText::new("⚠ ②のリハーサル開始画面に戻してから「続行」を押してください")
+                .color(Color32::from_rgb(200, 120, 0))
+                .strong(),
+        );
+        ui.add_space(6.0);
         if ui
             .button(RichText::new(format!("⏵ 続行 (残り {}回)", remaining)).size(18.0))
             .clicked()
         {
             actions.continue_run = true;
         }
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("ゲームをリハーサル開始画面に戻してから続行してください").small(),
-        );
     }
 
     let session_path = match status {
@@ -258,45 +277,56 @@ fn render_generated_files(ui: &mut egui::Ui, session_path: &std::path::Path) {
     );
 }
 
-/// Idle-only resume picker. The caller guarantees the list is non-empty.
+/// Idle-only resume picker, collapsed by default so it never feels always-on.
+/// The caller guarantees the list is non-empty. Each interrupted session gets
+/// its own row with a ▶再開 (resume) and a ✕ (dismiss) button; dismissing marks
+/// the session done on disk so it never lists again.
 fn render_resume_section(ui: &mut egui::Ui, state: &mut GuiState, actions: &mut PanelActions) {
-    ui.add_space(8.0);
-    ui.heading("中断したセッションを再開");
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new("ゲームをリハーサル開始画面に戻してから再開してください").small(),
-    );
-    ui.add_space(6.0);
+    let count = state.resumable_sessions.len();
 
-    let selected_label = state
-        .selected_resume
-        .and_then(|i| state.resumable_sessions.get(i))
-        .map(|s| {
+    // Snapshot the row labels first so the picker can mutate `state` (the
+    // selected-index channel) inside the loop without a borrow conflict.
+    let rows: Vec<(usize, String)> = state
+        .resumable_sessions
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
             let name = s.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            format!("{} — {}/{}", name, s.completed, s.total)
+            (i, format!("{} — {}/{}回", name, s.completed, s.total))
         })
-        .unwrap_or_else(|| "選択してください".to_string());
+        .collect();
 
-    egui::ComboBox::from_id_source("resume_session_combo")
-        .selected_text(selected_label)
-        .show_ui(ui, |ui| {
-            for (i, s) in state.resumable_sessions.iter().enumerate() {
-                let name = s.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                let label = format!("{} — {}/{}", name, s.completed, s.total);
-                ui.selectable_value(&mut state.selected_resume, Some(i), label);
+    egui::CollapsingHeader::new(format!("中断したセッションを再開 ({}件)", count))
+        .id_source("resume_sessions_collapsing")
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new("⚠ ②のリハーサル開始画面に戻してから再開してください")
+                    .color(Color32::from_rgb(200, 120, 0))
+                    .small(),
+            );
+            ui.add_space(6.0);
+
+            for (i, label) in rows {
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("▶ 再開").size(14.0)).clicked() {
+                        state.selected_resume = Some(i);
+                        actions.resume_selected = true;
+                    }
+                    if ui
+                        .button("✕")
+                        .on_hover_text("このセッションをリストから削除（データは残ります）")
+                        .clicked()
+                    {
+                        state.selected_resume = Some(i);
+                        actions.dismiss_selected = true;
+                    }
+                    ui.label(label);
+                });
+            }
+
+            ui.add_space(6.0);
+            if ui.button("🔄 更新").clicked() {
+                actions.refresh_resumable = true;
             }
         });
-
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.add_enabled_ui(state.selected_resume.is_some(), |ui| {
-            if ui.button(RichText::new("▶ 選択を再開").size(16.0)).clicked() {
-                actions.resume_selected = true;
-            }
-        });
-        ui.add_space(8.0);
-        if ui.button("🔄 更新").clicked() {
-            actions.refresh_resumable = true;
-        }
-    });
 }

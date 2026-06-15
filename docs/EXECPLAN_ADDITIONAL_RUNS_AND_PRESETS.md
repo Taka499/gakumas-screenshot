@@ -22,7 +22,7 @@ You can see it working like this. Open the app: under "実行回数:" you now se
 
 - [x] (2026-06-15Z) M1: Extend-capable engine. Added `extend_automation(session_dir, additional)` to `src/automation/runner.rs` (recompute completed from screenshots via `count_captured`, new total = completed + additional, reuse folder via the existing `start_automation_inner`) and re-exported it from `src/automation/mod.rs`. `cargo check` clean (`grep "^error"` → no output).
 - [x] (2026-06-15Z) M2: Preset run-count buttons. Added `COUNT_PRESETS = [100, 200, 500, 1000]` and a reusable `render_count_input(ui, label, value)` helper to `src/gui/render.rs`; replaced the idle 実行回数 input block with a call to it. `cargo check` clean. Visual confirmation of the preset row in the idle panel pending (requires running the elevated binary).
-- [ ] M3: 「追加実行」 GUI wiring. Add `additional_iterations` to `GuiState`, an `extend` flag to `PanelActions`, a `render_extend_section` helper, render it in the finished (non-resumable) state and in the idle "前回の結果" shortcut, add `handle_extend` to `GuiApp`, and dispatch it. Gate: `cargo build --release` clean; manual Scenarios A–D below.
+- [x] (2026-06-15Z) M3: 「追加実行」 GUI wiring. Added `additional_iterations` (default 100) to `GuiState`, an `extend` flag to `PanelActions`, a `render_extend_section` helper rendered in the finished non-resumable state (gated `status.resumable().is_none() && session_path.is_some()`) and in the idle "前回の結果" shortcut; widened `render_finished` to `&mut GuiState` (compiled cleanly — `render_control_panel` passes `&status`, a borrow of the local clone, so no E0502); added `handle_extend` to `GuiApp` (reads new total/current from the runner's seeded atomics) and dispatched `actions.extend`. `cargo build --release` clean; `git grep` confirms all symbols wired. Manual Scenarios A–D pending (require the elevated binary against the live game).
 
 Use timestamps (UTC) when checking off items, e.g. `- [x] (2026-06-15 14:00Z) ...`.
 
@@ -58,6 +58,8 @@ Use timestamps (UTC) when checking off items, e.g. `- [x] (2026-06-15 14:00Z) ..
 ## Outcomes & Retrospective
 
 To be completed at the end of each milestone and at full completion. Compare against Purpose: can the user (a) add more runs to a finished series into the same folder with unified output, from both the finished panel and the idle shortcut, and (b) set either run count with one tap on a 100/200/500/1000 preset?
+
+- 2026-06-15 (M1–M3 code-complete): All three milestones implemented as specified across five files (`src/automation/runner.rs`, `src/automation/mod.rs`, `src/gui/state.rs`, `src/gui/render.rs`, `src/gui/mod.rs`). `extend_automation` reuses `start_automation_inner` unchanged, so the append/numbering/charts behavior is inherited from the proven resume path. The anticipated borrow constraint (widening `render_finished` to `&mut GuiState`) did not surface as an error because `render_control_panel` matches on a clone of the status and passes `&status`, exactly as the plan predicted. `cargo check` (M1, M2) and `cargo build --release` (M3) all finish with no `error:` lines. `git grep` confirms every new symbol is defined once and called where intended. Remaining: manual behavioral acceptance (Scenarios A–D), which needs the elevated binary against a live game session and cannot be automated here.
 
 
 ## Context and Orientation

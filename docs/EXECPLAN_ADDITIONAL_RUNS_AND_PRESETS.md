@@ -20,7 +20,7 @@ You can see it working like this. Open the app: under "実行回数:" you now se
 
 ## Progress
 
-- [ ] M1: Extend-capable engine. Add `extend_automation(session_dir, additional)` to `src/automation/runner.rs` (recompute completed from screenshots, new total = completed + additional, reuse folder via the existing `start_automation_inner`) and re-export it from `src/automation/mod.rs`. Gate: `cargo check` clean (only pre-existing warnings).
+- [x] (2026-06-15Z) M1: Extend-capable engine. Added `extend_automation(session_dir, additional)` to `src/automation/runner.rs` (recompute completed from screenshots via `count_captured`, new total = completed + additional, reuse folder via the existing `start_automation_inner`) and re-exported it from `src/automation/mod.rs`. `cargo check` clean (`grep "^error"` → no output).
 - [ ] M2: Preset run-count buttons. Add a reusable `render_count_input` helper plus a `COUNT_PRESETS` constant to `src/gui/render.rs`, and use it for the idle 実行回数 input. Gate: `cargo check` clean; visually, the idle panel shows the `100 200 500 1000` row and tapping a button sets the count.
 - [ ] M3: 「追加実行」 GUI wiring. Add `additional_iterations` to `GuiState`, an `extend` flag to `PanelActions`, a `render_extend_section` helper, render it in the finished (non-resumable) state and in the idle "前回の結果" shortcut, add `handle_extend` to `GuiApp`, and dispatch it. Gate: `cargo build --release` clean; manual Scenarios A–D below.
 

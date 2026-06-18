@@ -21,8 +21,9 @@ use crate::ocr::ocr_screenshot;
 pub fn run_ocr_worker(
     receiver: Receiver<OcrWorkItem>,
     csv_path: PathBuf,
-    ocr_threshold: u8,
     score_regions: [RelativeRect; 3],
+    total_regions: [RelativeRect; 3],
+    bonus_regions: [RelativeRect; 3],
 ) {
     crate::log("OCR worker started");
 
@@ -49,8 +50,8 @@ pub fn run_ocr_worker(
                 };
 
                 // Run OCR
-                let scores = match ocr_screenshot(&img, ocr_threshold, &score_regions) {
-                    Ok(scores) => scores,
+                let readout = match ocr_screenshot(&img, &score_regions, &total_regions, &bonus_regions) {
+                    Ok(readout) => readout,
                     Err(e) => {
                         crate::log(&format!(
                             "OCR worker: OCR failed for iteration {}: {}",
@@ -59,6 +60,7 @@ pub fn run_ocr_worker(
                         continue; // Skip this item, continue with next
                     }
                 };
+                let scores = readout.scores;
 
                 // Log the extracted scores
                 crate::log(&format!(
@@ -118,11 +120,13 @@ mod tests {
             RelativeRect { x: 0.0, y: 0.418, width: 1.0, height: 0.035 },
             RelativeRect { x: 0.0, y: 0.670, width: 1.0, height: 0.035 },
         ];
+        let total_regions = score_regions;
+        let bonus_regions = score_regions;
 
         // Spawn worker
         let csv_path_clone = csv_path.clone();
         let handle = thread::spawn(move || {
-            run_ocr_worker(receiver, csv_path_clone, 190, score_regions);
+            run_ocr_worker(receiver, csv_path_clone, score_regions, total_regions, bonus_regions);
         });
 
         // Drop sender to close channel

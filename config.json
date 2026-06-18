@@ -42,7 +42,7 @@
     "y": 0.5
   },
   "ocr_threshold": 190,
-  "total_threshold": 190,
+  "total_threshold": 210,
   "bonus_blue_min": 190,
   "bonus_br_margin": 30,
   "score_regions": [

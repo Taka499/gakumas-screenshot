@@ -41,7 +41,7 @@ State these to yourself; the whole reconstruction depends on them. They are fact
 ## Progress
 
 - [x] (2026-06-18) M1 — Structural re-split so overlapping tokens never overflow `u32` and the previously-correct sample still parses. (Pure-function change in `src/ocr/extract.rs` + unit tests using the four real OCR strings.) `SCORE_TOKEN_PATTERN` capped to `1[,.]\d{3}[,.]\d{3}|\d{1,3}(?:[,.]\d{3})?|<dashes>`; four new tests on the real OCR strings pass (003/005 prove no `u32` overflow; 102623 unchanged). `cargo test extract` → 24 passed. Also added a `GAKUMAS_NO_MANIFEST=1` build.rs gate so the admin-manifest no longer blocks `cargo test` (default/release behaviour unchanged).
-- [ ] M2 — Add OCR of the stage total and bonus badge: new config regions, a single-number OCR helper, and have `ocr_screenshot` return totals and bonuses alongside the nine scores. Validate on the four sample PNGs.
+- [x] (2026-06-18) M2 — Add OCR of the stage total and bonus badge: new config regions, a single-number OCR helper, and have `ocr_screenshot` return totals and bonuses alongside the nine scores. Validate on the four sample PNGs. Added `total_regions`/`bonus_regions` + `total_threshold`/`bonus_blue_min`/`bonus_br_margin` to `AutomationConfig` (defaults mirror config.json); `recognize_single_number` (psm 7, whitelist, optional last-"+" anchor, >7/>6-digit guard) + `parse_single_number`/`longest_digit_run` helpers in `engine.rs`; `blue_mask` in `preprocess.rs`; `StageReadout` struct + widened `ocr_screenshot(img, score_regions, total_regions, bonus_regions)` in `mod.rs`; `Recovery` enum in new `reconcile.rs`. Callers updated (`ocr_worker`, `runner`, `main::test_ocr`). Validated via `scripts/debug_total_bonus.py`: all four stage-2 totals read correctly at `total_threshold=210` (003=2744700, 005=2362759, 102842=3661912; 102623=8-digit garbage→rejected→None, safe) and all bonuses read cleanly. `cargo test` → 61 passed. **Key calibration discovery: `total_threshold` raised 190→210** (see Surprises).
 - [ ] M3 — Checksum reconstruction solver (pure function `reconcile_stage`). The checksum `total == c1+c2+c3+floor(max/5)` needs only the total; the bonus is an optional cross-check. Uses a corruption-aware cost to pick the right reconstruction. Unit-tested with all four real samples (fails before, passes after).
 - [ ] M4 — Wire reconciliation into the live pipeline (`src/ocr/mod.rs`, `src/automation/ocr_worker.rs`), record a confidence flag, and log flagged iterations. End-to-end check on the samples.
 - [ ] M5 (optional) — Bonus-column argmax cross-check and calibration-wizard support for the new regions.
@@ -68,6 +68,9 @@ Use timestamps when you check items off, e.g. `- [x] (2026-06-18 14:00Z) ...`.
 
 - Observation: the bonus is not an independent number — it is exactly `floor(max(c1,c2,c3) / 5)` (0.2× the largest score, floored). This collapses the two-number checksum (`total = sum + bonus`) into a one-number checksum (`total = sum + floor(max/5)`) that needs only the total, so reconstruction no longer depends on bonus OCR at all.
   Evidence: 003 floor(1327533/5)=265506; 005 floor(1083349/5)=216669; 102842 floor(1172665/5)=234533; 102623 floor(1171024/5)=234204 (max is the middle column here, and the bonus matches it — confirming it tracks the max, not a fixed column). All equal the displayed bonuses.
+
+- Observation (M2 calibration, 2026-06-18): the stage **total** OCR is more fragile than assumed and needs `total_threshold = 210` (not 190). At 190 the leading "3" of a `3,XXX,XXX` total is misread as "5" (sample 005 read `2,562,759` for true `2,362,759`; sample 102842 read `5,661,912` for true `3,661,912`) — a wrong-but-7-digit value that would pass the digit-count guard and break the checksum. The crisper strokes at 210 disambiguate "3" from "5", giving correct reads on 003/005/102842. A faint "Pt" suffix can additionally leak a trailing digit at some thresholds (102623 reads `3,322,1716` at 210; 303 read `2,698,8796` at 190) — but that is always an 8-digit value, so the `> 7 digits → None` guard in `recognize_single_number` rejects it deterministically. Adding "Pt" to the whitelist does NOT help (Tesseract still emits the trailing 6, and narrowing the crop is infeasible because the total is centered and its width varies with the score). Consequence for the regression-guard sample 102623: its total is rejected (→ None), so it degrades to the structural-only tier and returns its already-correct scores unchanged (`Recovery::Ok`) — still passing acceptance. The bonus badge (blue mask) read all values cleanly on all four samples at the committed knobs; no change needed there.
+  Evidence: threshold sweep 150–210 on 005/102842 (only 210 reads both totals correctly); cross-check on `temp/failed_ocr_samples/` (210 fixed 303's trailing-6 with no regressions); `scripts/debug_total_bonus.py` at `--threshold 210`.
 
 - Observation: a plain edit-count cost ties on real data, so the solver needs a corruption-aware (asymmetric) cost. A unit can be traded between two slots without changing the sum or `floor(max/5)`.
   Evidence: For sample 003 (OCR `[1327534,151661,0]`, total 2,744,700), both `[1327533,1151661,0]` (correct) and `[1327534,1151660,0]` (wrong) satisfy the checksum at plain cost 2. Charging more to edit the units of a +1M-restored slot than its left neighbour (per invariant 3) breaks the tie toward the correct answer.
@@ -301,8 +304,10 @@ To measure/confirm the total and bonus crops independently of the Rust code, you
 As you finalize the normalized region rectangles, record the exact values you committed here so the plan stays self-contained:
 
     score_regions:  (unchanged) y = 0.179 / 0.430 / 0.685, h = 0.022, full width
-    total_regions:  y = <fill in> , h = <fill in> , x/width = <fill in>
-    bonus_regions:  y = <fill in> , h = <fill in> , x = <fill in>, width = <fill in>
+    total_regions:  y = 0.137 / 0.388 / 0.641, h = 0.035, x = 0.29, width = 0.40
+    bonus_regions:  y = 0.201 / 0.452 / 0.706, h = 0.022, x = 0.28 (s2 0.2806), width = 0.45
+    preprocessing:  ocr_threshold = 190, total_threshold = 210, bonus_blue_min = 190, bonus_br_margin = 30
+    (total whitelist "0123456789,", bonus whitelist "0123456789+" with last-"+" anchor; both psm 7)
 
 
 ## Validation and Acceptance

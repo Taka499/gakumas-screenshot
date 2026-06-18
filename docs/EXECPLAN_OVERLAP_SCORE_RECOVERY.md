@@ -40,7 +40,7 @@ State these to yourself; the whole reconstruction depends on them. They are fact
 
 ## Progress
 
-- [ ] M1 — Structural re-split so overlapping tokens never overflow `u32` and the previously-correct sample still parses. (Pure-function change in `src/ocr/extract.rs` + unit tests using the four real OCR strings.)
+- [x] (2026-06-18) M1 — Structural re-split so overlapping tokens never overflow `u32` and the previously-correct sample still parses. (Pure-function change in `src/ocr/extract.rs` + unit tests using the four real OCR strings.) `SCORE_TOKEN_PATTERN` capped to `1[,.]\d{3}[,.]\d{3}|\d{1,3}(?:[,.]\d{3})?|<dashes>`; four new tests on the real OCR strings pass (003/005 prove no `u32` overflow; 102623 unchanged). `cargo test extract` → 24 passed. Also added a `GAKUMAS_NO_MANIFEST=1` build.rs gate so the admin-manifest no longer blocks `cargo test` (default/release behaviour unchanged).
 - [ ] M2 — Add OCR of the stage total and bonus badge: new config regions, a single-number OCR helper, and have `ocr_screenshot` return totals and bonuses alongside the nine scores. Validate on the four sample PNGs.
 - [ ] M3 — Checksum reconstruction solver (pure function `reconcile_stage`). The checksum `total == c1+c2+c3+floor(max/5)` needs only the total; the bonus is an optional cross-check. Uses a corruption-aware cost to pick the right reconstruction. Unit-tested with all four real samples (fails before, passes after).
 - [ ] M4 — Wire reconciliation into the live pipeline (`src/ocr/mod.rs`, `src/automation/ocr_worker.rs`), record a confidence flag, and log flagged iterations. End-to-end check on the samples.

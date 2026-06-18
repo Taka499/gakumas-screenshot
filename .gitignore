@@ -7,3 +7,9 @@ Cargo.lock
 !resources/guide/**/*.png
 tmpclaude-*
 /debug/
+
+# Python (debug/calibration tooling under scripts/)
+__pycache__/
+*.py[cod]
+.venv/
+.uv/

@@ -301,8 +301,13 @@ pub fn reconstruct_from_digits(
     // (combo, cost) for every partition that satisfies the checksum.
     let mut solutions: Vec<([u32; 3], u32)> = Vec::new();
 
+    // Parts may be up to 8 digits: a colliding leading "1" is sometimes
+    // *duplicated* by OCR rather than dropped (the right number's "1" overlaps
+    // the left number's units glyph and reads as "11"), inflating one part to 8
+    // digits. Such a part is collapsed back to 7 by dropping the doubled leading
+    // digit. See the digit-insertion case in the ExecPlan's field-run notes.
     for k in 1..=3usize.min(n) {
-        for comp in compositions(n, k, 1, 7) {
+        for comp in compositions(n, k, 1, 8) {
             // Slice the stream into k parts.
             let mut parts: [&[u8]; 3] = [&[], &[], &[]];
             let mut off = 0;
@@ -311,10 +316,18 @@ pub fn reconstruct_from_digits(
                 off += comp[i];
             }
 
-            // Per-part value options: the literal value, plus — for a non-first
-            // 6-digit part that lost a leading digit — `d,XXX,XXX` for each
-            // leading digit `d` (1..) keeping it below MAX_SCORE. A 7-digit
-            // literal may start with any digit now (scores can exceed 2M).
+            // Per-part value options: the literal value, plus collision-victim
+            // repairs for non-first parts (a leading digit is only ever corrupted
+            // at a junction, whose left operand is >= 1M — enforced below):
+            //   - a 6-digit part that *lost* its leading "1": `d,XXX,XXX`;
+            //   - a 7-digit part that is impossible (>= MAX_SCORE, i.e. leading
+            //     digit 3..9) because the leading "1" was *substituted* (e.g.
+            //     "0"+"1" overlap misread as "4"): replace the leading digit with
+            //     1 or 2 (the only valid leading digits of a >= 1M score);
+            //   - an 8-digit part whose first two digits are equal: the leading
+            //     "1" was *duplicated*, so drop one (collapse to 7 digits).
+            // A clean 7-digit literal may start with any digit (scores can
+            // exceed 2M), so the literal is always kept when in range.
             let mut popts: [Vec<(u32, bool)>; 3] = [Vec::new(), Vec::new(), Vec::new()];
             let mut comp_valid = true;
             for i in 0..k {
@@ -328,6 +341,23 @@ pub fn reconstruct_from_digits(
                         if rv >= MAX_SCORE {
                             break;
                         }
+                        popts[i].push((rv, true));
+                    }
+                }
+                if i > 0 && comp[i] == 7 && v >= MAX_SCORE {
+                    // Impossible 7-digit part: its leading digit was substituted.
+                    let tail = v % 1_000_000;
+                    for d in 1..=2u32 {
+                        let rv = d * 1_000_000 + tail;
+                        if rv < MAX_SCORE {
+                            popts[i].push((rv, true));
+                        }
+                    }
+                }
+                if i > 0 && comp[i] == 8 && parts[i][0] == parts[i][1] {
+                    // Duplicated leading digit: drop one, collapse to 7 digits.
+                    let rv: u32 = std::str::from_utf8(&parts[i][1..]).unwrap().parse().unwrap_or(u32::MAX);
+                    if rv < MAX_SCORE {
                         popts[i].push((rv, true));
                     }
                 }
@@ -619,6 +649,47 @@ mod tests {
             reconstruct_from_digits("91212711710241004816", Some(3322171), Some(234204)).unwrap();
         assert_eq!(scores, [912127, 1171024, 1004816]);
         assert_eq!(rec, Recovery::Ok);
+    }
+
+    // --- Field-run failures (run 20260620_030517): the colliding leading "1"
+    //     was *substituted* or *duplicated* rather than dropped. ---
+
+    #[test]
+    fn test_reconstruct_leading_digit_substituted_iter337() {
+        // "0"+"1" overlap misread the leading "1" of 1,023,847 as "4", giving an
+        // impossible 7-digit part 4,023,847. Stream "115624040238471089584".
+        let (scores, rec) =
+            reconstruct_from_digits("115624040238471089584", Some(3500919), Some(231248)).unwrap();
+        assert_eq!(scores, [1156240, 1023847, 1089584]);
+        assert_eq!(rec, Recovery::Repaired);
+    }
+
+    #[test]
+    fn test_reconstruct_leading_digit_substituted_iter372() {
+        // 1,057,372 read as 4,057,372 (single collision; c3 sub-million).
+        let (scores, rec) =
+            reconstruct_from_digits("13499404057372861381", Some(3538681), Some(269988)).unwrap();
+        assert_eq!(scores, [1349940, 1057372, 861381]);
+        assert_eq!(rec, Recovery::Repaired);
+    }
+
+    #[test]
+    fn test_reconstruct_leading_digit_substituted_iter174() {
+        // 1,238,281 read as 4,238,281; c1 also mis-tokenized but digits survive.
+        let (scores, rec) =
+            reconstruct_from_digits("106173042382811170156", Some(3717823), Some(247656)).unwrap();
+        assert_eq!(scores, [1061730, 1238281, 1170156]);
+        assert_eq!(rec, Recovery::Repaired);
+    }
+
+    #[test]
+    fn test_reconstruct_leading_digit_duplicated_iter71() {
+        // The colliding "1" of 1,023,254 was duplicated ("...997"+"11023254"),
+        // inflating the stream to 21 digits. Collapse the doubled leading digit.
+        let (scores, rec) =
+            reconstruct_from_digits("118499711023254644786", Some(3090036), Some(236999)).unwrap();
+        assert_eq!(scores, [1184997, 1023254, 644786]);
+        assert_eq!(rec, Recovery::Repaired);
     }
 
     #[test]

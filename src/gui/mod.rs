@@ -76,6 +76,13 @@ impl GuiApp {
         };
         // Populate the resume picker with interrupted sessions found on disk.
         app.scan_resumable_sessions();
+        // Seed "latest session" to the newest folder on disk so the previous-run
+        // actions (charts/folder/review/extend) are reachable right after launch,
+        // before any run starts this session. This is what lets a user review a
+        // past session's OCR results without first kicking off a new run.
+        if app.state.latest_session_path.is_none() {
+            app.state.latest_session_path = newest_session_dir();
+        }
         app
     }
 
@@ -787,6 +794,29 @@ impl GuiApp {
             _ => {}
         }
     }
+}
+
+/// Newest session folder under the output directory, or `None` if there are no
+/// sessions. Folder names are `YYYYMMDD_HHMMSS`, so the lexicographically-largest
+/// name is the most recent. Only directories containing a `results.csv` qualify,
+/// so an empty/aborted-before-OCR folder is skipped.
+fn newest_session_dir() -> Option<std::path::PathBuf> {
+    let dir = crate::paths::get_output_dir();
+    let mut best: Option<(String, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || !path.join("results.csv").exists() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if best.as_ref().map_or(true, |(b, _)| name > *b) {
+            best = Some((name, path));
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 /// Run the GUI application.

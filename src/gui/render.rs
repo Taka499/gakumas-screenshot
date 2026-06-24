@@ -438,89 +438,115 @@ pub fn render_review_window_contents(
         })
         .collect();
 
-    // Right-docked, resizable preview panel; the table fills the remainder. Using
-    // egui panels (not `ui.columns`) makes each region clip its own content, so
-    // the wide score table can never spill over the preview.
-    egui::SidePanel::right("review_preview_panel")
-        .resizable(true)
-        .default_width(300.0)
-        .width_range(180.0..=520.0)
-        .show_inside(ui, |ui| {
-            ui.add_space(2.0);
-            ui.label(RichText::new("画像プレビュー").strong());
-            ui.separator();
-            match &review.preview {
-                Some((iter, tex)) => {
-                    ui.label(format!("{}回目", iter));
-                    ui.add_space(2.0);
-                    let avail_w = (ui.available_width() - 4.0).max(40.0);
-                    let size = tex.size_vec2();
-                    let aspect = if size.x > 0.0 { size.y / size.x } else { 1.0 };
-                    egui::ScrollArea::vertical()
-                        .id_source("review_preview_scroll")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.image((tex.id(), Vec2::new(avail_w, avail_w * aspect)));
-                        });
-                }
-                None => {
-                    ui.label(
-                        RichText::new("📷 を押すと、その行の画像を\nここに表示します")
-                            .color(Color32::from_gray(120)),
-                    );
-                }
-            }
-        });
+    // Explicit fixed-width split: a left table region and a right preview region,
+    // each an `allocate_ui_with_layout` child of a bounded size so its content is
+    // clipped to its own area — the wide score table can never spill over the
+    // preview (the bug with the old equal `ui.columns` split).
+    let avail = ui.available_size();
+    let preview_w = (avail.x * 0.32).clamp(220.0, 380.0);
+    let table_w = (avail.x - preview_w - 14.0).max(220.0);
+    let h = avail.y.max(120.0);
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
-        if visible.is_empty() {
-            ui.label("要確認の行はありません（「すべて表示」で全件表示）");
-            return;
-        }
-        // Both-axis scroll so a wide table or a long list never overflows/clips.
-        egui::ScrollArea::both()
-            .id_source("review_table_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Grid::new("review_grid")
-                    .striped(true)
-                    .num_columns(6)
-                    .spacing([10.0, 4.0])
+    ui.horizontal_top(|ui| {
+        // --- Left: the editable table (bounded + both-axis scroll). ---
+        ui.allocate_ui_with_layout(
+            Vec2::new(table_w, h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_size(Vec2::new(table_w, h));
+                ui.set_max_width(table_w);
+                if visible.is_empty() {
+                    ui.label("要確認の行はありません（「すべて表示」で全件表示）");
+                    return;
+                }
+                egui::ScrollArea::both()
+                    .id_source("review_table_scroll")
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.label(RichText::new("#").strong());
-                        ui.label(RichText::new("ステージ1").strong());
-                        ui.label(RichText::new("ステージ2").strong());
-                        ui.label(RichText::new("ステージ3").strong());
-                        ui.label(RichText::new("状態").strong());
-                        ui.label("");
-                        ui.end_row();
+                        egui::Grid::new("review_grid")
+                            .striped(true)
+                            .num_columns(6)
+                            .spacing([10.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("#").strong());
+                                ui.label(RichText::new("ステージ1").strong());
+                                ui.label(RichText::new("ステージ2").strong());
+                                ui.label(RichText::new("ステージ3").strong());
+                                ui.label(RichText::new("状態").strong());
+                                ui.label("");
+                                ui.end_row();
 
-                        for &i in &visible {
-                            let iteration = review.rows[i].iteration;
-                            ui.label(iteration.to_string());
-                            for s in 0..3 {
-                                ui.horizontal(|ui| {
-                                    for c in 0..3 {
-                                        let resp = ui.add(
-                                            egui::TextEdit::singleline(&mut review.edits[i][s][c])
-                                                .desired_width(58.0)
-                                                .id_source(("cell", i, s, c)),
-                                        );
-                                        if resp.changed() {
-                                            review.dirty = true;
-                                        }
+                                for &i in &visible {
+                                    let iteration = review.rows[i].iteration;
+                                    ui.label(iteration.to_string());
+                                    for s in 0..3 {
+                                        ui.horizontal(|ui| {
+                                            for c in 0..3 {
+                                                let resp = ui.add(
+                                                    egui::TextEdit::singleline(
+                                                        &mut review.edits[i][s][c],
+                                                    )
+                                                    .desired_width(58.0)
+                                                    .id_source(("cell", i, s, c)),
+                                                );
+                                                if resp.changed() {
+                                                    review.dirty = true;
+                                                }
+                                            }
+                                        });
                                     }
-                                });
-                            }
-                            let rec = review.rows[i].recovery.clone();
-                            ui.label(RichText::new(&rec).color(recovery_color(&rec)).small());
-                            if ui.button("📷").on_hover_text("この行の画像を表示").clicked() {
-                                actions.preview_iter = Some(iteration);
-                            }
-                            ui.end_row();
-                        }
+                                    let rec = review.rows[i].recovery.clone();
+                                    ui.label(
+                                        RichText::new(&rec).color(recovery_color(&rec)).small(),
+                                    );
+                                    if ui
+                                        .button("📷")
+                                        .on_hover_text("この行の画像を表示")
+                                        .clicked()
+                                    {
+                                        actions.preview_iter = Some(iteration);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
                     });
-            });
+            },
+        );
+
+        ui.separator();
+
+        // --- Right: the screenshot preview (bounded width). ---
+        ui.allocate_ui_with_layout(
+            Vec2::new(preview_w, h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_size(Vec2::new(preview_w, h));
+                ui.set_max_width(preview_w);
+                ui.label(RichText::new("画像プレビュー").strong());
+                ui.separator();
+                match &review.preview {
+                    Some((iter, tex)) => {
+                        ui.label(format!("{}回目", iter));
+                        ui.add_space(2.0);
+                        let img_w = (preview_w - 12.0).max(40.0);
+                        let size = tex.size_vec2();
+                        let aspect = if size.x > 0.0 { size.y / size.x } else { 1.0 };
+                        egui::ScrollArea::vertical()
+                            .id_source("review_preview_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.image((tex.id(), Vec2::new(img_w, img_w * aspect)));
+                            });
+                    }
+                    None => {
+                        ui.label(
+                            RichText::new("📷 を押すと、その行の画像を\nここに表示します")
+                                .color(Color32::from_gray(120)),
+                        );
+                    }
+                }
+            },
+        );
     });
 }
 

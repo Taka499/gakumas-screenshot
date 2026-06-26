@@ -397,15 +397,61 @@ pub fn render_review_window_contents(
     review: &mut ReviewState,
     actions: &mut ReviewActions,
 ) {
-    let attention = review
-        .rows
-        .iter()
-        .filter(|r| r.recovery == "flagged" || r.recovery == "repaired")
-        .count();
+    ui.horizontal(|ui| {
+        // Per-status visibility toggles (attention-first). Each is colour-matched
+        // to its recovery badge.
+        let status_chk = |ui: &mut egui::Ui, on: &mut bool, label: &str| {
+            ui.checkbox(on, RichText::new(label).color(recovery_color(label)));
+        };
+        status_chk(ui, &mut review.show_flagged, "flagged");
+        status_chk(ui, &mut review.show_repaired, "repaired");
+        status_chk(ui, &mut review.show_ok, "ok");
+        status_chk(ui, &mut review.show_manual, "manual");
+        ui.checkbox(&mut review.show_all, "すべて表示");
+        ui.separator();
+        // Live substring search over the score cells + iteration (Ctrl+F style).
+        ui.label("🔍");
+        ui.add(
+            egui::TextEdit::singleline(&mut review.search)
+                .hint_text("スコア検索")
+                .desired_width(120.0),
+        );
+        if !review.search.is_empty() && ui.small_button("✕").on_hover_text("検索をクリア").clicked() {
+            review.search.clear();
+        }
+    });
+    ui.add_space(2.0);
+
+    // Snapshot which rows to show (index list) so the borrow on `review.rows`
+    // during filtering does not collide with the mutable cell editing below.
+    // Status toggle AND the search filter both apply; search persists across
+    // status changes because it is independent state.
+    let q = review.search.trim().to_lowercase();
+    let visible: Vec<usize> = (0..review.rows.len())
+        .filter(|&i| {
+            let status_on = review.show_all
+                || match review.rows[i].recovery.as_str() {
+                    "repaired" => review.show_repaired,
+                    "flagged" => review.show_flagged,
+                    "manual" => review.show_manual,
+                    _ => review.show_ok, // "ok" and any legacy/blank value
+                };
+            if !status_on {
+                return false;
+            }
+            if q.is_empty() {
+                return true;
+            }
+            review.rows[i].iteration.to_string().contains(&q)
+                || review.edits[i]
+                    .iter()
+                    .flatten()
+                    .any(|s| s.to_lowercase().contains(&q))
+        })
+        .collect();
 
     ui.horizontal(|ui| {
-        ui.checkbox(&mut review.show_all, "すべて表示");
-        ui.label(format!("要確認 {} / 全 {} 件", attention, review.rows.len()));
+        ui.label(format!("表示 {} / 全 {} 件", visible.len(), review.rows.len()));
         ui.separator();
         if ui
             .add_enabled(review.dirty, egui::Button::new(RichText::new("💾 保存").strong()))
@@ -420,23 +466,14 @@ pub fn render_review_window_contents(
                     .small(),
             );
         }
+        ui.separator();
+        ui.label(
+            RichText::new("📷 で画像を表示・セルを編集して「保存」")
+                .small()
+                .color(Color32::from_rgb(0, 120, 200)),
+        );
     });
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new("📷 で画像を表示し、セルを直接編集して「保存」してください")
-            .small()
-            .color(Color32::from_rgb(0, 120, 200)),
-    );
     ui.separator();
-
-    // Snapshot which rows to show (index list) so the borrow on `review.rows`
-    // during filtering does not collide with the mutable cell editing below.
-    let show_all = review.show_all;
-    let visible: Vec<usize> = (0..review.rows.len())
-        .filter(|&i| {
-            show_all || review.rows[i].recovery == "flagged" || review.rows[i].recovery == "repaired"
-        })
-        .collect();
 
     if visible.is_empty() {
         ui.label("要確認の行はありません（「すべて表示」で全件表示）");

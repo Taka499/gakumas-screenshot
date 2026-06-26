@@ -37,6 +37,7 @@ After this change a user can: open a finished session's review window, click �
 
 - [x] (2026-06-26) M1 (config + crop derivation) — added `ReviewCropAdjust` struct (+ `Default` 0.05/0.0/0.0/0.22), the serde-defaulted `review_crop_adjust` field on `AutomationConfig`, and the pure clamped `review_crop_rect(config, stage)` in `src/automation/config.rs`; re-exported both from `src/automation/mod.rs`. Three unit tests pass (`GAKUMAS_NO_MANIFEST=1 cargo test review_crop` → 3 passed; default extends over portraits & trims right to width≈0.78; over-extension clamps y→0; inset>width → width 0 not negative). `review_crop_rect`/`ReviewCropAdjust` are re-exported but unused until M3 (expected warning).
 - [x] (2026-06-27) M2 (state + expand toggle) — added `expanded: Option<u32>` to `ReviewState` (+ `Debug` field + `None` init in `handle_open_review`); added `ReviewActions.toggle_expand: Option<u32>`; `render_review_window` dispatches it (second click on the same row collapses; on expand it calls the existing `load_review_preview` to cache that row's texture for the crops). Compiles clean (`cargo check`, 0 errors); `toggle_expand` is set by M3's 📷 button (dormant until then).
+- [ ] M4 (tuning tool + field calibration) — extend `scripts/region_tuner.py` so the review crop can be tuned visually, then calibrate `review_crop_adjust` against a real screenshot and paste the result into `config.json`. Tool extension done (2026-06-27); field calibration of the default pending the user.
 - [x] (2026-06-27) M3 (inline dynamic layout) — code-complete. Replaced the fixed 12-column `Grid` + right preview pane in `render_review_window_contents` with a single `ScrollArea::both` of per-row `ui.horizontal`s: dynamic `cell_w = clamp((avail - 44 - 150)/9, 60, 160)`, a header aligned to `iter_w`/`group_w`, and per-stage `ui.vertical` (three cells, then the crop when expanded). Added `draw_stage_crop` (UV sub-image of the cached texture, height from native aspect, "読み込み中…" placeholder while the texture loads). Removed `ReviewActions.preview_iter` and its dispatch; the 📷 button now sets `toggle_expand` and shows 📷✓ when open. Builds clean via `scripts/build.ps1` (3m50s, 0 errors, 28 expected warnings). **Manual GUI acceptance pending** (tray app can't be `cargo test`-driven).
 
 Use timestamps when checking items off, e.g. `- [x] (2026-06-26 14:00Z) ...`.
@@ -48,7 +49,10 @@ Use timestamps when checking items off, e.g. `- [x] (2026-06-26 14:00Z) ...`.
   Evidence: `src/ocr/mod.rs::crop_region` multiplies the same fractions by `img.width()/height()` to crop for OCR, confirming the fractions are relative to the full captured image.
 - Observation: native screenshot is 721×1281; one `score_regions` band is ~721×28px (≈25:1). Scaled into a ~224px three-column group that is ~9px tall — the readability problem motivating the icon-inclusive crop.
   Evidence: measured a sample, `target/release/output/20260116_012805/screenshots/001_20260116_012814.png` → 721×1281; `score_regions[0].height = 0.022` → `0.022 * 1281 ≈ 28px`.
-- (Extend as M1–M3 land.)
+- Observation: the *default* `ReviewCropAdjust` (top_extend 0.05, right_inset 0.22) framed the dark TOTAL banner + the score line, not the character portraits, and looked left-leaning. The portrait band's exact offset from the score line is not what the default guessed, so the default must be calibrated against a real screenshot rather than estimated.
+  Evidence: user screenshot of the running review window (2026-06-27): the expanded crop showed "1,272,040 Pt" with the three scores beneath, no icons.
+  Resolution: M4 extends `scripts/region_tuner.py` to tune the review crop visually so the right `review_crop_adjust` is found empirically, not guessed.
+- (Extend as M4 lands / default is recalibrated.)
 
 
 ## Decision Log
@@ -68,6 +72,10 @@ Use timestamps when checking items off, e.g. `- [x] (2026-06-26 14:00Z) ...`.
 - Decision: remove the right-hand whole-image preview pane; the inline per-stage crops replace its purpose and reclaim its width for the table.
   Rationale: the inline crops show the relevant region larger and in context; keeping a second whole-image pane would only re-introduce the unreadable-because-tiny view this plan removes. `load_review_preview` is retained (repurposed to load the expanded row's texture for the crops).
   Date/Author: 2026-06-26.
+
+- Decision: tune `review_crop_adjust` empirically by extending the existing `scripts/region_tuner.py` browser tool, rather than estimating defaults from a single inspected screenshot.
+  Rationale: the estimated default framed the total banner, not the portraits (see Surprises). The tuner already overlays draggable rectangles on a chosen screenshot and writes a config.json snippet; adding the review crop there lets the user see exactly what the GUI will render and read off the correct adjust. The three crops are derived live from `score_regions` + one shared adjust and move together (dragging any one edits the shared adjust), which both matches the runtime model and visually validates the "same offset works for all three stages" assumption.
+  Date/Author: 2026-06-27, user direction ("Extend the existing HTML bounding box adjustment tool for easier parameter adjustment").
 
 
 ## Outcomes & Retrospective
@@ -303,6 +311,20 @@ Because only one row is expanded at a time and `review.preview` caches exactly t
 Acceptance (manual, build + run): open a finished session with flagged rows; the table fills the window width and the cells widen when the window is widened. Click a row's 📷 — that row expands and, under each of its three stages, the character icons and printed scores appear, each image as wide as that stage's three cells. Widen/maximize the window: the crops (and cells) grow. Click 📷 again — the row collapses. Edit a cell, 💾 保存, reopen — the correction persists (save path is unchanged from the prior plan).
 
 
+### Milestone M4 — Tune `review_crop_adjust` with the region tuner
+
+Goal: find the correct shared `ReviewCropAdjust` for the real game layout (so the crop frames the character portraits + printed scores, not the total banner) using a visual tool, and record it in `config.json`.
+
+`scripts/region_tuner.py` is an existing local browser tool (run `uv run scripts/region_tuner.py`, open `http://127.0.0.1:8777`) that overlays draggable rectangles on a chosen screenshot to calibrate the OCR `total_regions`/`bonus_regions`, reading current values from and emitting a JSON snippet for `config.json`. This milestone extends it with a **review crop** layer:
+
+- Server (`region_tuner.py`): `load_regions()` also returns `score` (from `config.json`'s `score_regions`, falling back to `SCORE_FALLBACK` that mirrors `default_score_regions()` in `src/automation/config.rs`); a new `load_review_adjust()` reads `review_crop_adjust` (fallback `REVIEW_ADJUST_FALLBACK` mirroring `ReviewCropAdjust::default()`); `/samples` returns both.
+- Client: three purple dashed rectangles, one per stage, derived live by a JS `reviewRect(i)` that mirrors `review_crop_rect()` (`score_regions[i]` ± the shared adjust, clamped). Four sliders (top/bottom extend, left/right inset) drive the shared adjust; dragging any rectangle (move = translate → `left+=dx,right-=dx,top-=dy,bottom+=dy`; corner = resize far edges → `right-=dx,bottom+=dy`) edits the same shared adjust so all three move together. A `<canvas>` thumbnail under the sliders renders each derived crop from the loaded image at native aspect — exactly what the GUI's review window draws. The `config.json snippet` textarea now also includes a `review_crop_adjust` object to copy.
+
+To use: run the tuner, type the path to one of this run's screenshots (e.g. `target/release/output/<session>/screenshots/001_*.png`) into the custom-path box, then drag/slide until the three purple boxes frame each stage's portraits + scores and the thumbnails look right. Copy the `review_crop_adjust` block into `config.json`, relaunch the app, and re-open the review window to confirm. Once a good value is found, update `ReviewCropAdjust::default()` in `src/automation/config.rs` so fresh installs ship the calibrated crop.
+
+Acceptance: with the tuned `review_crop_adjust` in `config.json`, the GUI review window's expanded crops show the character portraits and printed scores (not the total banner), framed without excess margin.
+
+
 ## Concrete Steps
 
 From repo root `C:\Work\GitRepos\gakumas-screenshot` (PowerShell; the Bash tool is also available):
@@ -368,3 +390,5 @@ In `src/gui/mod.rs`: `render_review_window` dispatches `toggle_expand` (set/clea
 ## Revision Note
 
 2026-06-26: Initial authoring. Refines the review window from `docs/EXECPLAN_OCR_REVIEW_EDIT_GUI.md`: replaces the narrow right-hand whole-screenshot preview with inline, expand-on-demand, per-stage crops placed under each stage's editable columns, sized dynamically to the column-group width (so widening the window enlarges them). The crop region is derived from `score_regions` plus a small configurable `ReviewCropAdjust` (top/bottom extend, left/right inset) rather than an independent region, so the game developer's forthcoming horizontal score re-layout propagates from a single calibration source while leaving readability adjustments available. Three milestones: the pure configurable derivation (unit tested), the expand state + 📷 toggle wiring, and the dynamic inline layout with UV-cropped per-stage images.
+
+2026-06-27: Added milestone M4 after field testing M3. The estimated default `ReviewCropAdjust` framed the dark total banner instead of the character portraits (user screenshot), so rather than guessing new numbers, extended the existing `scripts/region_tuner.py` browser tool with a review-crop layer (three live-derived purple rectangles + four shared-adjust sliders + per-stage canvas thumbnails + a `review_crop_adjust` JSON snippet) so the correct adjust is found visually against a real screenshot and pasted into `config.json`. The runtime code (M1–M3) is unchanged; only the tuner and the plan grew.

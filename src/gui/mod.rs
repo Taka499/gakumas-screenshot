@@ -6,7 +6,7 @@ pub mod render;
 pub mod state;
 
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use eframe::egui::{self, TextureHandle, Vec2};
@@ -36,6 +36,13 @@ const HOTKEY_ABORT: i32 = 102;
 /// Global hotkey event signal (set by hotkey thread, read by GUI thread)
 static HOTKEY_TRIGGERED: AtomicI32 = AtomicI32::new(0);
 
+/// egui context shared with the hotkey thread. eframe only runs `update()` when
+/// the window is focused/repainting, so a hotkey pressed while the window is in
+/// the background would sit queued until the window came to front. The hotkey
+/// thread uses this to `request_repaint()` and wake the event loop immediately,
+/// giving real-time background screenshots.
+static EGUI_CTX: OnceLock<egui::Context> = OnceLock::new();
+
 /// Embedded guide images (also copied to resources/guide/ by build.rs and package-release.ps1).
 const GUIDE_IMAGE_1: &[u8] = include_bytes!("../../resources/guide/step1_contest_mode.png");
 const GUIDE_IMAGE_2: &[u8] = include_bytes!("../../resources/guide/step2_rehearsal_page.png");
@@ -62,6 +69,11 @@ impl GuiApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // Configure fonts to support Japanese
         Self::setup_fonts(&cc.egui_ctx);
+
+        // Share the egui context with the hotkey thread so a background hotkey
+        // press can wake the event loop (real-time screenshots even when this
+        // window is not focused).
+        let _ = EGUI_CTX.set(cc.egui_ctx.clone());
 
         // Set up tray icon
         let (tray_icon, menu_event_receiver) = Self::setup_tray_icon();
@@ -738,6 +750,14 @@ impl eframe::App for GuiApp {
         // Main panel
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("学マス リハーサル統計自動化ツール");
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "💡 ショートカット: Ctrl+Shift+S でスクリーンショット／ Ctrl+Shift+Q で自動実行を中止",
+                )
+                .small()
+                .weak(),
+            );
             ui.add_space(8.0);
 
             // Three-column layout: image1, image2, controls
@@ -971,6 +991,12 @@ fn run_hotkey_thread(running: Arc<std::sync::atomic::AtomicBool>) {
                 if msg.message == WM_HOTKEY {
                     let hotkey_id = msg.wParam.0 as i32;
                     HOTKEY_TRIGGERED.store(hotkey_id, Ordering::SeqCst);
+                    // Wake the GUI event loop so the hotkey is handled now, even
+                    // when the window is in the background (otherwise update()
+                    // would not run until the window regained focus).
+                    if let Some(ctx) = EGUI_CTX.get() {
+                        ctx.request_repaint();
+                    }
                 }
                 let _ = DispatchMessageW(&msg);
             } else {

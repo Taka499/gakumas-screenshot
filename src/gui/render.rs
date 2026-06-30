@@ -5,10 +5,65 @@
 use eframe::egui::{self, Color32, RichText, TextureHandle, Vec2};
 
 use super::state::{AutomationStatus, GuiState, ReviewState};
+use crate::analysis::statistics::{ColumnStats, DataSetStats};
 
 /// One-tap run-count presets shown beneath every run-count input. Edit this
 /// single array to change the buttons everywhere they appear.
 const COUNT_PRESETS: [u32; 4] = [100, 200, 500, 1000];
+
+/// Column labels for the nine score columns, shared by the live plot and table.
+const SCORE_COLUMN_LABELS: [&str; 9] = [
+    "S1C1", "S1C2", "S1C3", "S2C1", "S2C2", "S2C3", "S3C1", "S3C2", "S3C3",
+];
+
+/// Abbreviate a score for the compact live table: values >= 1000 use a "k" suffix
+/// (e.g. 284103 -> "284k", 1340813 -> "1341k"); smaller values are shown whole.
+/// Keeps each cell narrow enough that nine columns fit side by side.
+pub fn abbrev_k(v: f64) -> String {
+    let r = v.round();
+    if r < 1000.0 {
+        format!("{}", r as i64)
+    } else {
+        format!("{}k", (r / 1000.0).round() as i64)
+    }
+}
+
+/// Render the live per-column statistics as a compact six-row, nine-column table
+/// that updates as the run progresses. Rows are Avg, Med, Max, Min, Q1, Q3; columns
+/// are S1C1..S3C3. Values use the `abbrev_k` "k" abbreviation so the numbers fit.
+/// This replaces the statistics text that used to be drawn inside the plot image.
+pub fn render_live_stats_table(ui: &mut egui::Ui, stats: &DataSetStats) {
+    // Each metric is a name plus a field accessor (non-capturing closures coerce to
+    // function pointers, so they share one type and live in a single array).
+    let metrics: [(&str, fn(&ColumnStats) -> f64); 6] = [
+        ("Avg", |c| c.mean),
+        ("Med", |c| c.median),
+        ("Max", |c| c.max as f64),
+        ("Min", |c| c.min as f64),
+        ("Q1", |c| c.quartile_1),
+        ("Q3", |c| c.quartile_3),
+    ];
+
+    egui::Grid::new("live_stats_table")
+        .striped(true)
+        .num_columns(10)
+        .show(ui, |ui| {
+            // Header row: blank corner cell, then the nine column labels.
+            ui.label("");
+            for label in SCORE_COLUMN_LABELS {
+                ui.label(RichText::new(label).strong().small());
+            }
+            ui.end_row();
+
+            for (name, accessor) in metrics {
+                ui.label(RichText::new(name).strong().small());
+                for col in &stats.columns {
+                    ui.label(RichText::new(abbrev_k(accessor(col))).small());
+                }
+                ui.end_row();
+            }
+        });
+}
 
 /// Renders a run-count input: a numeric DragValue (drag or click-to-type,
 /// clamped 1..=9999) followed by a row of one-tap preset buttons that set the
@@ -252,18 +307,8 @@ fn render_running(
     if ui.button(RichText::new("◼ 停止").size(18.0)).clicked() {
         actions.stop = true;
     }
-
     // The live score-distribution figure (when enabled) is shown large in a separate
-    // right-hand side panel, not here, so it is actually readable. See
-    // `GuiApp::render_live_chart_panel`.
-    if state.show_live_chart {
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("→ スコア分布を右側に表示中")
-                .small()
-                .weak(),
-        );
-    }
+    // right-hand side panel, not here, so it is actually readable.
 }
 
 /// Finished (Completed/Aborted/Error): colored summary + progress, one

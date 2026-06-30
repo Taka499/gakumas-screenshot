@@ -60,6 +60,27 @@ impl DataSetStats {
             columns,
         }
     }
+
+    /// Calculate statistics from raw score rows (`[stage][slot]`), e.g. the live
+    /// in-run buffer. Mirrors `from_dataset` but takes owned rows instead of a
+    /// `DataSet`/CSV. An empty `rows` slice yields nine zeroed columns (so an
+    /// early-run figure renders flat boxes at 0 rather than panicking).
+    pub fn from_score_rows(rows: &[[[u32; 3]; 3]]) -> Self {
+        let mut columns = Vec::with_capacity(9);
+
+        for stage in 0..3 {
+            for criterion in 0..3 {
+                let values: Vec<u32> = rows.iter().map(|r| r[stage][criterion]).collect();
+                let stats = calculate_column_stats(&values, stage + 1, criterion + 1);
+                columns.push(stats);
+            }
+        }
+
+        DataSetStats {
+            total_runs: rows.len(),
+            columns,
+        }
+    }
 }
 
 /// Calculate statistics for a single column of values.
@@ -203,6 +224,38 @@ mod tests {
         let values = vec![1, 2, 3, 4, 5];
         let stats = calculate_column_stats(&values, 1, 1);
         assert!((stats.mean - 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn from_score_rows_builds_nine_columns() {
+        // Five rows; column [0][0] holds 100,110,120,130,140 (median 120, min 100, max 140).
+        let rows = vec![
+            [[100, 200, 300], [400, 500, 600], [700, 800, 900]],
+            [[110, 210, 310], [410, 510, 610], [710, 810, 910]],
+            [[120, 220, 320], [420, 520, 620], [720, 820, 920]],
+            [[130, 230, 330], [430, 530, 630], [730, 830, 930]],
+            [[140, 240, 340], [440, 540, 640], [740, 840, 940]],
+        ];
+        let stats = DataSetStats::from_score_rows(&rows);
+        assert_eq!(stats.total_runs, 5);
+        assert_eq!(stats.columns.len(), 9);
+
+        let c00 = &stats.columns[0]; // S1C1
+        assert_eq!(c00.min, 100);
+        assert_eq!(c00.max, 140);
+        assert!((c00.median - 120.0).abs() < 0.001);
+
+        let c22 = &stats.columns[8]; // S3C3
+        assert_eq!(c22.min, 900);
+        assert_eq!(c22.max, 940);
+    }
+
+    #[test]
+    fn from_score_rows_empty_is_zeroed() {
+        let stats = DataSetStats::from_score_rows(&[]);
+        assert_eq!(stats.total_runs, 0);
+        assert_eq!(stats.columns.len(), 9);
+        assert!(stats.columns.iter().all(|c| c.count == 0 && c.max == 0));
     }
 
     #[test]

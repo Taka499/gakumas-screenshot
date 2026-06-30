@@ -604,9 +604,251 @@ pub fn generate_combined_box_plot(
     Ok(())
 }
 
+/// Canvas dimensions for the live in-run distribution figure.
+const LIVE_PLOT_W: u32 = 1200;
+const LIVE_PLOT_H: u32 = 980;
+/// Y of the split between the box-plot area and the labels/statistics strip.
+const LIVE_PLOT_SPLIT_Y: u32 = 650;
+
+/// Insert thousands separators into a non-negative integer (e.g. 284103 -> "284,103").
+/// Local helper so the live figure needs no extra crate.
+fn group_thousands(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    let len = bytes.len();
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*b as char);
+    }
+    out
+}
+
+/// Render the combined nine-box distribution plus a six-line statistics block
+/// (Avg, Med, Max, Min, Q1, Q3) under each box, into an RGBA8 pixel buffer.
+///
+/// Returns `(width, height, rgba_bytes)` with `rgba_bytes.len() == width*height*4`,
+/// ready for `egui::ColorImage::from_rgba_unmultiplied`. No file is written. This
+/// mirrors `generate_combined_box_plot` (same colors, layout, and box geometry) but
+/// targets an in-memory buffer for the live GUI view and adds the per-column stats
+/// block. `excluded_flagged` is the count of flagged rows omitted from `stats`, shown
+/// in the title so the user understands any gap vs. the iteration counter.
+pub fn render_live_box_plot_rgba(
+    stats: &super::statistics::DataSetStats,
+    excluded_flagged: usize,
+) -> Result<(u32, u32, Vec<u8>)> {
+    // plotters BitMapBackend writes RGB (3 bytes/pixel) into this buffer.
+    let mut rgb = vec![0u8; (LIVE_PLOT_W * LIVE_PLOT_H * 3) as usize];
+
+    {
+        let root =
+            BitMapBackend::with_buffer(&mut rgb, (LIVE_PLOT_W, LIVE_PLOT_H)).into_drawing_area();
+        root.fill(&WHITE)
+            .context("Failed to fill live chart background")?;
+
+        // Global Y range across all columns (same approach as the on-disk figure).
+        let global_min = stats.columns.iter().map(|c| c.min).min().unwrap_or(0) as f64;
+        let global_max = stats.columns.iter().map(|c| c.max).max().unwrap_or(100) as f64;
+        let range = (global_max - global_min).max(1.0);
+        let y_min = (global_min - range * 0.05).max(0.0);
+        let y_max = global_max + range * 0.05;
+
+        let title = format!(
+            "Score Distribution ({} runs, {} flagged excluded)",
+            stats.total_runs, excluded_flagged
+        );
+
+        let (upper, lower) = root.split_vertically(LIVE_PLOT_SPLIT_Y);
+
+        let mut chart = ChartBuilder::on(&upper)
+            .caption(&title, ("sans-serif", 24))
+            .margin(20)
+            .x_label_area_size(10)
+            .y_label_area_size(80)
+            .build_cartesian_2d(0.0f64..9.0f64, y_min..y_max)
+            .context("Failed to build live box plot")?;
+
+        chart
+            .configure_mesh()
+            .disable_x_mesh()
+            .disable_x_axis()
+            .y_desc("Score")
+            .y_label_formatter(&|y| format!("{:.0}", y))
+            .draw()
+            .context("Failed to draw live mesh")?;
+
+        let labels = [
+            "S1C1", "S1C2", "S1C3", "S2C1", "S2C2", "S2C3", "S3C1", "S3C2", "S3C3",
+        ];
+        let label_font = ("sans-serif", 16).into_font();
+        let stat_font = ("sans-serif", 12).into_font();
+        let chart_left = 80i32; // Match y_label_area_size
+        let chart_width = LIVE_PLOT_W as i32 - chart_left - 20; // Total width minus margins
+        let box_width_px = chart_width as f64 / 9.0;
+
+        // Stage colors (Stage 1 red, Stage 2 green, Stage 3 blue).
+        let stage_colors = [
+            RGBColor(220, 80, 80),
+            RGBColor(80, 180, 80),
+            RGBColor(80, 120, 200),
+        ];
+        let box_width = 0.35;
+        let cap_width = 0.2;
+        let whisker_color = RGBColor(80, 80, 80);
+
+        for (idx, col_stats) in stats.columns.iter().enumerate() {
+            let stage = idx / 3;
+            let x_center = idx as f64 + 0.5;
+            let box_color = stage_colors[stage];
+            let min_val = col_stats.min as f64;
+            let max_val = col_stats.max as f64;
+
+            // Box fill (Q1..Q3)
+            chart.draw_series(std::iter::once(Rectangle::new(
+                [
+                    (x_center - box_width, col_stats.quartile_1),
+                    (x_center + box_width, col_stats.quartile_3),
+                ],
+                box_color.mix(0.4).filled(),
+            )))?;
+            // Box outline
+            chart.draw_series(std::iter::once(Rectangle::new(
+                [
+                    (x_center - box_width, col_stats.quartile_1),
+                    (x_center + box_width, col_stats.quartile_3),
+                ],
+                box_color.stroke_width(2),
+            )))?;
+            // Median line
+            chart.draw_series(std::iter::once(PathElement::new(
+                vec![
+                    (x_center - box_width, col_stats.median),
+                    (x_center + box_width, col_stats.median),
+                ],
+                RGBColor(200, 50, 50).stroke_width(2),
+            )))?;
+            // Whiskers
+            chart.draw_series(std::iter::once(PathElement::new(
+                vec![(x_center, min_val), (x_center, col_stats.quartile_1)],
+                whisker_color.stroke_width(1),
+            )))?;
+            chart.draw_series(std::iter::once(PathElement::new(
+                vec![(x_center, col_stats.quartile_3), (x_center, max_val)],
+                whisker_color.stroke_width(1),
+            )))?;
+            // Min/max caps
+            chart.draw_series(std::iter::once(PathElement::new(
+                vec![
+                    (x_center - cap_width, min_val),
+                    (x_center + cap_width, min_val),
+                ],
+                whisker_color.stroke_width(1),
+            )))?;
+            chart.draw_series(std::iter::once(PathElement::new(
+                vec![
+                    (x_center - cap_width, max_val),
+                    (x_center + cap_width, max_val),
+                ],
+                whisker_color.stroke_width(1),
+            )))?;
+        }
+
+        // Labels and per-column statistics block in the lower strip. The lower area's
+        // local origin (0,0) is its top-left; the box area sits above it.
+        for (idx, col_stats) in stats.columns.iter().enumerate() {
+            let col_left = chart_left + (idx as i32 * chart_width / 9) + 4;
+            let label_x =
+                chart_left + (idx as i32 * chart_width / 9) + (box_width_px as i32 / 2) - 15;
+
+            // Column header (S1C1 ..) on the first row of the strip.
+            lower.draw_text(labels[idx], &label_font.color(&BLACK), (label_x, 5))?;
+
+            // Six statistics, one per line, rounded to whole scores with separators.
+            let rows = [
+                ("Avg", col_stats.mean.round() as u64),
+                ("Med", col_stats.median.round() as u64),
+                ("Max", col_stats.max as u64),
+                ("Min", col_stats.min as u64),
+                ("Q1", col_stats.quartile_1.round() as u64),
+                ("Q3", col_stats.quartile_3.round() as u64),
+            ];
+            for (line, (name, value)) in rows.iter().enumerate() {
+                let y = 34 + (line as i32) * 20;
+                let text = format!("{}: {}", name, group_thousands(*value));
+                lower.draw_text(&text, &stat_font.color(&BLACK), (col_left, y))?;
+            }
+        }
+
+        root.present().context("Failed to render live box plot")?;
+    }
+
+    // plotters wrote RGB; egui wants RGBA. Expand with opaque alpha.
+    let mut rgba = Vec::with_capacity((LIVE_PLOT_W * LIVE_PLOT_H * 4) as usize);
+    for px in rgb.chunks_exact(3) {
+        rgba.extend_from_slice(px);
+        rgba.push(255);
+    }
+
+    Ok((LIVE_PLOT_W, LIVE_PLOT_H, rgba))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::statistics::DataSetStats;
+
+    fn sample_rows() -> Vec<[[u32; 3]; 3]> {
+        // A handful of rows with distinct per-column values so quartiles are non-trivial.
+        vec![
+            [[100, 200, 300], [400, 500, 600], [700, 800, 900]],
+            [[110, 210, 310], [410, 510, 610], [710, 810, 910]],
+            [[120, 220, 320], [420, 520, 620], [720, 820, 920]],
+            [[130, 230, 330], [430, 530, 630], [730, 830, 930]],
+            [[140, 240, 340], [440, 540, 640], [740, 840, 940]],
+        ]
+    }
+
+    #[test]
+    fn render_live_box_plot_returns_rgba_buffer() {
+        let stats = DataSetStats::from_score_rows(&sample_rows());
+        let (w, h, rgba) = render_live_box_plot_rgba(&stats, 2).unwrap();
+        assert_eq!(w, LIVE_PLOT_W);
+        assert_eq!(h, LIVE_PLOT_H);
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        // Every 4th byte is the opaque alpha we appended.
+        assert!(rgba.chunks_exact(4).all(|px| px[3] == 255));
+    }
+
+    #[test]
+    fn render_live_box_plot_handles_empty() {
+        // Zero usable rows must not panic (early-run case).
+        let stats = DataSetStats::from_score_rows(&[]);
+        let (w, h, rgba) = render_live_box_plot_rgba(&stats, 0).unwrap();
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+    }
+
+    #[test]
+    fn group_thousands_inserts_separators() {
+        assert_eq!(group_thousands(0), "0");
+        assert_eq!(group_thousands(284103), "284,103");
+        assert_eq!(group_thousands(1340813), "1,340,813");
+        assert_eq!(group_thousands(999), "999");
+    }
+
+    // Eyeball preview: writes the live figure to temp/live_box_plot_preview.png.
+    // Run with: GAKUMAS_NO_MANIFEST=1 cargo test live_box_plot_preview -- --ignored
+    #[test]
+    #[ignore]
+    fn live_box_plot_preview() {
+        let stats = DataSetStats::from_score_rows(&sample_rows());
+        let (w, h, rgba) = render_live_box_plot_rgba(&stats, 1).unwrap();
+        let img = image::RgbaImage::from_raw(w, h, rgba).expect("buffer size matches dimensions");
+        std::fs::create_dir_all("temp").ok();
+        img.save("temp/live_box_plot_preview.png")
+            .expect("write preview png");
+    }
 
     #[test]
     fn test_calculate_bucket_size() {

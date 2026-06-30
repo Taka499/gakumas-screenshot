@@ -28,10 +28,26 @@ pub fn abbrev_k(v: f64) -> String {
     }
 }
 
-/// Render the live per-column statistics as a compact six-row, nine-column table
-/// that updates as the run progresses. Rows are Avg, Med, Max, Min, Q1, Q3; columns
-/// are S1C1..S3C3. Values use the `abbrev_k` "k" abbreviation so the numbers fit.
-/// This replaces the statistics text that used to be drawn inside the plot image.
+/// A single centered table cell, so values sit centered in their equal-width column.
+fn stat_cell(ui: &mut egui::Ui, text: &str, strong: bool) {
+    let rt = if strong {
+        RichText::new(text).strong().small()
+    } else {
+        RichText::new(text).small()
+    };
+    ui.with_layout(
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            ui.label(rt);
+        },
+    );
+}
+
+/// Render the live per-column statistics as a six-row, nine-column table that updates
+/// as the run progresses. Rows are Avg, Med, Max, Min, Q1, Q3; columns are S1C1..S3C3.
+/// Values use the `abbrev_k` "k" abbreviation so the numbers fit. The ten columns are
+/// sized to span the full panel width. This replaces the statistics text that used to
+/// be drawn inside the plot image.
 pub fn render_live_stats_table(ui: &mut egui::Ui, stats: &DataSetStats) {
     // Each metric is a name plus a field accessor (non-capturing closures coerce to
     // function pointers, so they share one type and live in a single array).
@@ -44,21 +60,28 @@ pub fn render_live_stats_table(ui: &mut egui::Ui, stats: &DataSetStats) {
         ("Q3", |c| c.quartile_3),
     ];
 
+    // Equal-width columns (label + 9 data) that together fill the panel width.
+    const NUM_COLS: f32 = 10.0;
+    let spacing = ui.spacing().item_spacing.x;
+    let col_w = ((ui.available_width() - spacing * (NUM_COLS - 1.0)) / NUM_COLS).max(36.0);
+
     egui::Grid::new("live_stats_table")
         .striped(true)
-        .num_columns(10)
+        .num_columns(NUM_COLS as usize)
+        .min_col_width(col_w)
+        .max_col_width(col_w)
         .show(ui, |ui| {
             // Header row: blank corner cell, then the nine column labels.
-            ui.label("");
+            stat_cell(ui, "", true);
             for label in SCORE_COLUMN_LABELS {
-                ui.label(RichText::new(label).strong().small());
+                stat_cell(ui, label, true);
             }
             ui.end_row();
 
             for (name, accessor) in metrics {
-                ui.label(RichText::new(name).strong().small());
+                stat_cell(ui, name, true);
                 for col in &stats.columns {
-                    ui.label(RichText::new(abbrev_k(accessor(col))).small());
+                    stat_cell(ui, &abbrev_k(accessor(col)), false);
                 }
                 ui.end_row();
             }

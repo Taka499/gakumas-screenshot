@@ -965,8 +965,11 @@ impl eframe::App for GuiApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
-        // Header spanning the full width.
-        egui::TopBottomPanel::top("header_panel").show(ctx, |ui| {
+        // Header spanning the full width. No separator line (it looked awkward above
+        // the columns, which originally had none).
+        egui::TopBottomPanel::top("header_panel")
+            .show_separator_line(false)
+            .show(ctx, |ui| {
             ui.add_space(4.0);
             ui.heading("学マス リハーサル統計自動化ツール");
             ui.label(
@@ -994,7 +997,7 @@ impl eframe::App for GuiApp {
                 .default_width(LIVE_PLOT_PANEL_WIDTH)
                 .min_width(380.0)
                 .show(ctx, |ui| {
-                    egui::ScrollArea::both()
+                    egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.add_space(4.0);

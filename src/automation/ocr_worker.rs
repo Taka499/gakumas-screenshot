@@ -101,6 +101,15 @@ pub fn run_ocr_worker(
                     Recovery::Ok => {}
                 }
 
+                // Feed the live distribution buffer (read by the GUI to render the
+                // in-run box plot). Done before the CSV write so the live view does
+                // not depend on disk success. Flagged rows are kept but excluded
+                // from live stats until verified.
+                crate::automation::runner::record_live_score(
+                    scores,
+                    matches!(recovery, Recovery::Flagged),
+                );
+
                 // Append to CSV
                 if let Err(e) = append_to_csv(&csv_path, &work_item, &scores, recovery_str) {
                     crate::log(&format!(

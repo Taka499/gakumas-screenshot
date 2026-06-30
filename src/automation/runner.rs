@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Local;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::thread;
@@ -26,6 +26,77 @@ static CURRENT_ITERATION: AtomicU32 = AtomicU32::new(0);
 
 /// Total iterations for current run (for GUI progress display).
 static TOTAL_ITERATIONS: AtomicU32 = AtomicU32::new(0);
+
+/// One row of live OCR scores for the in-progress run's distribution view.
+///
+/// `flagged` is true when overlap-recovery could not confidently reconstruct the
+/// row (its worst stage came back `flagged`). Such rows are kept here but excluded
+/// from the live statistics until verified, so the live box plot is never skewed
+/// by an unconfirmed value.
+#[derive(Clone, Copy, Debug)]
+pub struct LiveScoreRow {
+    /// The nine per-character scores: `[stage][slot]`.
+    pub scores: [[u32; 3]; 3],
+    /// Whether this row's OCR was flagged for review (excluded from live stats).
+    pub flagged: bool,
+}
+
+/// Live score buffer for the in-progress run, read by the GUI thread to render
+/// the live distribution figure. Reset on a fresh run, seeded from the existing
+/// CSV on resume/extend. Mirrors the `CURRENT_STATE_DESC` mutex pattern.
+static LIVE_SCORES: Mutex<Vec<LiveScoreRow>> = Mutex::new(Vec::new());
+
+/// Records one completed iteration's scores into the live buffer (called from the
+/// OCR worker thread). `flagged` rows are kept but excluded from live statistics.
+pub fn record_live_score(scores: [[u32; 3]; 3], flagged: bool) {
+    if let Ok(mut v) = LIVE_SCORES.lock() {
+        v.push(LiveScoreRow { scores, flagged });
+    }
+}
+
+/// Returns a clone of the current live score buffer (for the GUI to compute stats
+/// without holding the lock while rendering).
+pub fn get_live_scores() -> Vec<LiveScoreRow> {
+    LIVE_SCORES.lock().map(|v| v.clone()).unwrap_or_default()
+}
+
+/// Number of rows currently in the live buffer (cheap change-detection for the GUI).
+pub fn live_score_count() -> usize {
+    LIVE_SCORES.lock().map(|v| v.len()).unwrap_or(0)
+}
+
+/// Empties the live score buffer (called at the start of every run).
+fn clear_live_scores() {
+    if let Ok(mut v) = LIVE_SCORES.lock() {
+        v.clear();
+    }
+}
+
+/// Seeds the live score buffer from an existing session's CSV so a resumed/extended
+/// run's live figure reflects the whole series, not just newly-added points. A
+/// missing or unreadable CSV must not abort the run, so errors are logged and the
+/// buffer is left as-is. Flagged rows are seeded with `flagged: true` (excluded
+/// from live stats until verified).
+fn seed_live_scores_from_csv(session_dir: &Path) {
+    match crate::automation::results_edit::load_review_rows(session_dir) {
+        Ok(rows) => {
+            if let Ok(mut v) = LIVE_SCORES.lock() {
+                for r in rows {
+                    v.push(LiveScoreRow {
+                        scores: r.scores,
+                        flagged: r.recovery == "flagged",
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            crate::log(&format!(
+                "Live distribution: could not seed from existing CSV ({}); starting empty",
+                e
+            ));
+        }
+    }
+}
 
 /// Current state description (for GUI progress display).
 static CURRENT_STATE_DESC: Mutex<String> = Mutex::new(String::new());
@@ -199,6 +270,7 @@ fn start_automation_inner(
 
     reset_abort_flag();
     clear_last_outcome();
+    clear_live_scores();
 
     let hwnd = match find_gakumas_window() {
         Ok(hwnd) => hwnd,
@@ -240,6 +312,12 @@ fn start_automation_inner(
     if let Err(e) = init_csv(&csv_path) {
         AUTOMATION_RUNNING.store(false, Ordering::SeqCst);
         return Err(anyhow!("Failed to initialize CSV file: {}", e));
+    }
+
+    // On resume/extend, pre-fill the live distribution buffer from the rows already
+    // in this session's CSV so the live figure reflects the whole series.
+    if is_resume {
+        seed_live_scores_from_csv(&session_dir);
     }
 
     // Seed progress with already-completed runs so the bar resumes correctly.
@@ -426,3 +504,35 @@ fn run_automation_loop(
 
 /// Re-export request_abort for convenience.
 pub use crate::automation::state::request_abort;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // NOTE: `LIVE_SCORES` is process-global. This is the only test that touches it;
+    // it clears the buffer at the top so it is self-contained even if other tests in
+    // this binary run concurrently without referencing the live buffer.
+    #[test]
+    fn live_score_buffer_records_and_excludes_flagged() {
+        clear_live_scores();
+        assert_eq!(live_score_count(), 0);
+
+        record_live_score([[1, 2, 3], [4, 5, 6], [7, 8, 9]], false);
+        record_live_score([[10, 11, 12], [13, 14, 15], [16, 17, 18]], false);
+        record_live_score([[0; 3]; 3], true);
+
+        let rows = get_live_scores();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(live_score_count(), 3);
+
+        let flags: Vec<bool> = rows.iter().map(|r| r.flagged).collect();
+        assert_eq!(flags, vec![false, false, true]);
+        assert_eq!(rows[0].scores, [[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
+
+        // Filtering out flagged rows (as the live stats will) leaves the two trusted rows.
+        let included: Vec<_> = rows.iter().filter(|r| !r.flagged).collect();
+        assert_eq!(included.len(), 2);
+
+        clear_live_scores();
+    }
+}

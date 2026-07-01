@@ -5,10 +5,90 @@
 use eframe::egui::{self, Color32, RichText, TextureHandle, Vec2};
 
 use super::state::{AutomationStatus, GuiState, ReviewState};
+use crate::analysis::statistics::{ColumnStats, DataSetStats};
 
 /// One-tap run-count presets shown beneath every run-count input. Edit this
 /// single array to change the buttons everywhere they appear.
 const COUNT_PRESETS: [u32; 4] = [100, 200, 500, 1000];
+
+/// Column labels for the nine score columns, shared by the live plot and table.
+const SCORE_COLUMN_LABELS: [&str; 9] = [
+    "S1C1", "S1C2", "S1C3", "S2C1", "S2C2", "S2C3", "S3C1", "S3C2", "S3C3",
+];
+
+/// Abbreviate a score for the compact live table: values >= 1000 use a "k" suffix
+/// (e.g. 284103 -> "284k", 1340813 -> "1341k"); smaller values are shown whole.
+/// Keeps each cell narrow enough that nine columns fit side by side.
+pub fn abbrev_k(v: f64) -> String {
+    let r = v.round();
+    if r < 1000.0 {
+        format!("{}", r as i64)
+    } else {
+        format!("{}k", (r / 1000.0).round() as i64)
+    }
+}
+
+/// Font size for the live statistics table — large enough to read comfortably.
+const STAT_TABLE_FONT: f32 = 16.0;
+
+/// A single centered table cell, so values sit centered in their equal-width column.
+fn stat_cell(ui: &mut egui::Ui, text: &str, strong: bool) {
+    let mut rt = RichText::new(text).size(STAT_TABLE_FONT);
+    if strong {
+        rt = rt.strong();
+    }
+    ui.with_layout(
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            ui.label(rt);
+        },
+    );
+}
+
+/// Render the live per-column statistics as a six-row, nine-column table that updates
+/// as the run progresses. Rows are Avg, Med, Max, Min, Q1, Q3; columns are S1C1..S3C3.
+/// Values use the `abbrev_k` "k" abbreviation so the numbers fit. The ten columns are
+/// sized to span the full panel width. This replaces the statistics text that used to
+/// be drawn inside the plot image.
+pub fn render_live_stats_table(ui: &mut egui::Ui, stats: &DataSetStats) {
+    // Each metric is a name plus a field accessor (non-capturing closures coerce to
+    // function pointers, so they share one type and live in a single array).
+    let metrics: [(&str, fn(&ColumnStats) -> f64); 6] = [
+        ("Avg", |c| c.mean),
+        ("Med", |c| c.median),
+        ("Max", |c| c.max as f64),
+        ("Min", |c| c.min as f64),
+        ("Q1", |c| c.quartile_1),
+        ("Q3", |c| c.quartile_3),
+    ];
+
+    // Equal-width columns (label + 9 data) that together fill the panel width.
+    const NUM_COLS: f32 = 10.0;
+    let spacing = ui.spacing().item_spacing.x;
+    let col_w = ((ui.available_width() - spacing * (NUM_COLS - 1.0)) / NUM_COLS).max(36.0);
+
+    egui::Grid::new("live_stats_table")
+        .striped(true)
+        .num_columns(NUM_COLS as usize)
+        .min_col_width(col_w)
+        .max_col_width(col_w)
+        .show(ui, |ui| {
+            // Header row: blank corner cell, then the nine column labels.
+            stat_cell(ui, "", true);
+            for label in SCORE_COLUMN_LABELS {
+                stat_cell(ui, label, true);
+            }
+            ui.end_row();
+
+            for (name, accessor) in metrics {
+                stat_cell(ui, name, true);
+                for col in &stats.columns {
+                    stat_cell(ui, &abbrev_k(accessor(col)), false);
+                }
+                ui.end_row();
+            }
+        });
+}
 
 /// Renders a run-count input: a numeric DragValue (drag or click-to-type,
 /// clamped 1..=9999) followed by a row of one-tap preset buttons that set the
@@ -154,10 +234,18 @@ pub fn render_control_panel(ui: &mut egui::Ui, state: &mut GuiState) -> PanelAct
 /// Idle: run-count input + Start, then the resume picker only if the on-disk
 /// scan found interrupted sessions.
 fn render_idle(ui: &mut egui::Ui, state: &mut GuiState, actions: &mut PanelActions) {
-    ui.label(RichText::new("③ 回数を設定して開始").strong());
+    ui.label(RichText::new("② 回数を設定して開始").strong());
     ui.add_space(8.0);
 
     render_count_input(ui, "実行回数:", &mut state.iterations);
+
+    ui.add_space(8.0);
+    // Pre-run preference: when on, the running panel shows a live score-distribution
+    // figure that updates as each iteration completes. Chosen here, before Start,
+    // because once a run begins the automation takes over the mouse and the user is
+    // asked not to move it — so it cannot be toggled from the running panel.
+    ui.checkbox(&mut state.show_live_chart, "ライブ分布を表示")
+        .on_hover_text("実行中に9つのスコア分布（箱ひげ図）をリアルタイム表示します");
 
     ui.add_space(12.0);
     if ui.button(RichText::new("▶ 開始").size(18.0)).clicked() {
@@ -244,6 +332,8 @@ fn render_running(
     if ui.button(RichText::new("◼ 停止").size(18.0)).clicked() {
         actions.stop = true;
     }
+    // The live score-distribution figure (when enabled) is shown large in a separate
+    // right-hand side panel, not here, so it is actually readable.
 }
 
 /// Finished (Completed/Aborted/Error): colored summary + progress, one

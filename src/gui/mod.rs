@@ -49,6 +49,56 @@ static EGUI_CTX: OnceLock<egui::Context> = OnceLock::new();
 const GUIDE_IMAGE_1: &[u8] = include_bytes!("../../resources/guide/step1_contest_mode.png");
 const GUIDE_IMAGE_2: &[u8] = include_bytes!("../../resources/guide/step2_rehearsal_page.png");
 
+/// Default window size (guide + controls only, live plot hidden).
+const WINDOW_SIZE_COLLAPSED: Vec2 = Vec2::new(620.0, 580.0);
+/// Window size when the live distribution side panel is shown — wide enough that
+/// the nine-box figure and the statistics table are comfortably readable, while the
+/// control column stays about as narrow as it originally was.
+const WINDOW_SIZE_EXPANDED: Vec2 = Vec2::new(1380.0, 760.0);
+/// Default width of the live-plot side panel.
+const LIVE_PLOT_PANEL_WIDTH: f32 = 760.0;
+/// Width of the left guide-image side panel.
+const GUIDE_PANEL_WIDTH: f32 = 300.0;
+
+/// Persisted GUI preferences, stored as `gui_settings.json` next to the executable
+/// (consistent with the app's other portable config files). Currently just the
+/// live-distribution toggle. Defaults to on.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GuiSettings {
+    show_live_chart: bool,
+}
+
+impl Default for GuiSettings {
+    fn default() -> Self {
+        Self { show_live_chart: true }
+    }
+}
+
+/// Path to the persisted GUI settings file (next to the executable).
+fn gui_settings_path() -> std::path::PathBuf {
+    crate::paths::get_exe_dir().join("gui_settings.json")
+}
+
+/// Loads GUI settings, returning defaults if the file is missing or unreadable.
+fn load_gui_settings() -> GuiSettings {
+    match std::fs::read_to_string(gui_settings_path()) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => GuiSettings::default(),
+    }
+}
+
+/// Persists GUI settings; failures are logged but never fatal.
+fn save_gui_settings(settings: &GuiSettings) {
+    match serde_json::to_string_pretty(settings) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(gui_settings_path(), json) {
+                crate::log(&format!("Failed to save GUI settings: {}", e));
+            }
+        }
+        Err(e) => crate::log(&format!("Failed to serialize GUI settings: {}", e)),
+    }
+}
+
 /// Main GUI application struct.
 pub struct GuiApp {
     /// Application state.
@@ -57,6 +107,27 @@ pub struct GuiApp {
     guide_images: [Option<TextureHandle>; 2],
     /// Flag to track if images have been loaded.
     images_loaded: bool,
+    /// Cached live distribution figure texture, rebuilt while a run is in progress.
+    /// Lives here (not on `GuiState`) because `TextureHandle` is not `Debug`.
+    live_chart_tex: Option<TextureHandle>,
+    /// Live-buffer row count the cached `live_chart_tex` was rendered from; used to
+    /// re-render the figure only when new iteration data has arrived.
+    live_chart_rendered_count: usize,
+    /// Latest per-column statistics for the live table (parallel to `live_chart_tex`).
+    live_chart_stats: Option<crate::analysis::statistics::DataSetStats>,
+    /// Included run count and flagged-excluded count for the live figure's heading.
+    live_chart_total: usize,
+    live_chart_excluded: usize,
+    /// Forces a live-figure re-render on the next frame even if the buffer row count
+    /// is unchanged. Set after a review save so manual corrections / verifications
+    /// (which can change values or flags without changing the row count) are reflected.
+    live_chart_dirty: bool,
+    /// Whether the window is currently expanded to make room for the live plot
+    /// side panel. Used to resize once on show/hide rather than every frame.
+    live_chart_expanded: bool,
+    /// Last `show_live_chart` value written to disk; lets us persist the preference
+    /// only when it actually changes rather than every frame.
+    saved_show_live_chart: bool,
     /// Tray icon (kept alive for the duration of the app).
     #[allow(dead_code)]
     tray_icon: Option<TrayIcon>,
@@ -80,10 +151,25 @@ impl GuiApp {
         // Set up tray icon
         let (tray_icon, menu_event_receiver) = Self::setup_tray_icon();
 
+        // Restore the persisted live-distribution preference (default on).
+        let settings = load_gui_settings();
+        let mut state = GuiState::default();
+        state.show_live_chart = settings.show_live_chart;
+
         let mut app = Self {
-            state: GuiState::default(),
+            state,
             guide_images: [None, None],
             images_loaded: false,
+            live_chart_tex: None,
+            live_chart_rendered_count: 0,
+            live_chart_stats: None,
+            live_chart_total: 0,
+            live_chart_excluded: 0,
+            live_chart_dirty: false,
+            // Seed to match the persisted preference so the initial viewport size
+            // (chosen in run_gui) is not resized on the first frame.
+            live_chart_expanded: settings.show_live_chart,
+            saved_show_live_chart: settings.show_live_chart,
             tray_icon,
             menu_event_receiver,
             exit_requested: false,
@@ -96,6 +182,13 @@ impl GuiApp {
         // past session's OCR results without first kicking off a new run.
         if app.state.latest_session_path.is_none() {
             app.state.latest_session_path = newest_session_dir();
+        }
+        // Seed the live distribution from the most recent session so its figure shows
+        // the last run's data right after launch (the LIVE_SCORES buffer is otherwise
+        // empty in a fresh process). A new run clears the buffer before it starts, so
+        // this never bleeds into a subsequent run.
+        if let Some(path) = &app.state.latest_session_path {
+            crate::automation::runner::reload_live_scores_from_csv(path);
         }
         app
     }
@@ -216,6 +309,53 @@ impl GuiApp {
         }
 
         self.images_loaded = true;
+    }
+
+    /// Rebuild the live score-distribution figure (box-plot texture + statistics for
+    /// the table) when the user has it enabled and new iteration data has arrived
+    /// since the last render. Runs whether or not a run is in progress, so the empty
+    /// figure is already visible the moment the user enables it (or on launch when the
+    /// preference is on). Flagged rows are excluded from the statistics (kept in the
+    /// buffer but not plotted) until verified. Cheap on idle frames thanks to the
+    /// row-count guard; only re-renders on a new data point.
+    fn update_live_chart(&mut self, ctx: &egui::Context) {
+        if !self.state.show_live_chart {
+            return;
+        }
+
+        let count = crate::automation::runner::live_score_count();
+        if !self.live_chart_dirty
+            && count == self.live_chart_rendered_count
+            && self.live_chart_tex.is_some()
+        {
+            return; // No new data and not force-invalidated since the last render.
+        }
+
+        let rows = crate::automation::runner::get_live_scores();
+        let included: Vec<[[u32; 3]; 3]> = rows
+            .iter()
+            .filter(|r| !r.flagged)
+            .map(|r| r.scores)
+            .collect();
+        let excluded = rows.len() - included.len();
+        let stats = crate::analysis::statistics::DataSetStats::from_score_rows(&included);
+
+        match crate::analysis::charts::render_live_box_plot_rgba(&stats) {
+            Ok((w, h, rgba)) => {
+                let color =
+                    egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                let tex = ctx.load_texture("live_box_plot", color, egui::TextureOptions::LINEAR);
+                self.live_chart_tex = Some(tex);
+                self.live_chart_total = included.len();
+                self.live_chart_excluded = excluded;
+                self.live_chart_stats = Some(stats);
+                self.live_chart_rendered_count = count;
+                self.live_chart_dirty = false;
+            }
+            Err(e) => {
+                crate::log(&format!("Live distribution: render failed ({})", e));
+            }
+        }
     }
 
     /// Update automation status by polling the automation runner.
@@ -688,6 +828,11 @@ impl GuiApp {
             // Keep the finished-panel prompt's count in step with the saved
             // recovery flags (a verified/manual row leaves the attention set).
             self.state.attention_counts = Some(Self::count_attention(&session_path));
+            // Refresh the live distribution from the saved CSV so the figure and table
+            // reflect the corrected/verified values (verification can re-include a row
+            // whose flag was cleared, which changes the stats without changing scores).
+            crate::automation::runner::reload_live_scores_from_csv(&session_path);
+            self.live_chart_dirty = true;
             // Charts derive only from the scores, so regenerate them only when a
             // score actually changed; a verify-only save leaves them identical.
             if changed > 0 {
@@ -768,6 +913,9 @@ impl GuiApp {
         // `verified` while a row also edited this frame wins as `manual`.
         if actions.save || actions.mark_verified.is_some() {
             self.handle_save_review();
+            // handle_save_review marks the live figure dirty; ensure the main viewport
+            // runs another frame to pick up the refreshed distribution.
+            ctx.request_repaint();
         }
         if actions.close {
             if let Some(r) = self.state.review.as_mut() {
@@ -810,15 +958,44 @@ impl eframe::App for GuiApp {
         // Poll automation status
         self.update_automation_status();
 
+        // Rebuild the live distribution figure when new iteration data has arrived.
+        self.update_live_chart(ctx);
+
+        // Persist the live-distribution preference whenever the user changes it, so it
+        // is remembered across restarts.
+        if self.state.show_live_chart != self.saved_show_live_chart {
+            save_gui_settings(&GuiSettings {
+                show_live_chart: self.state.show_live_chart,
+            });
+            self.saved_show_live_chart = self.state.show_live_chart;
+        }
+
+        // Expand the window the moment the live plot is enabled (not only once a run
+        // starts), and shrink it back when disabled. Resized once per transition so it
+        // never fights a manual resize.
+        let show_live_panel = self.state.show_live_chart;
+        if show_live_panel != self.live_chart_expanded {
+            let size = if show_live_panel {
+                WINDOW_SIZE_EXPANDED
+            } else {
+                WINDOW_SIZE_COLLAPSED
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            self.live_chart_expanded = show_live_panel;
+        }
+
         // Request repaint while automation is running (for progress updates)
         if self.state.status.is_running() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
-        // Main panel
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("学マス リハーサル統計自動化ツール");
+        // Header spanning the full width. No separator line (it looked awkward above
+        // the columns, which originally had none).
+        egui::TopBottomPanel::top("header_panel")
+            .show_separator_line(false)
+            .show(ctx, |ui| {
             ui.add_space(4.0);
+            ui.heading("学マス リハーサル統計自動化ツール");
             ui.label(
                 egui::RichText::new(
                     "💡 ショートカット: Ctrl+Shift+S でスクリーンショット／ Ctrl+Shift+Q で自動実行を中止",
@@ -826,40 +1003,71 @@ impl eframe::App for GuiApp {
                 .small()
                 .weak(),
             );
-            ui.add_space(8.0);
+            ui.add_space(4.0);
+        });
 
-            // Three-column layout: image1, image2, controls
-            ui.columns(3, |columns| {
-                // Column 1: First guide image
-                columns[0].vertical(|ui| {
-                    render::render_guide_image(ui, &self.guide_images[0], "① コンテストで「リハーサル」を選択");
-                });
+        // Left: the rehearsal-page guide image (fixed width).
+        egui::SidePanel::left("guide_panel")
+            .resizable(false)
+            .exact_width(GUIDE_PANEL_WIDTH)
+            .show(ctx, |ui| {
+                render::render_guide_image(ui, &self.guide_images[1], "① この画面で待機");
+            });
 
-                // Column 2: Second guide image
-                columns[1].vertical(|ui| {
-                    render::render_guide_image(ui, &self.guide_images[1], "② この画面で待機");
-                });
-
-                // Column 3: a single state-driven control panel, scrollable so nothing clips.
-                columns[2].vertical(|ui| {
+        // Right: the live distribution figure + statistics table (wide, resizable).
+        if show_live_panel {
+            egui::SidePanel::right("live_plot_panel")
+                .resizable(true)
+                .default_width(LIVE_PLOT_PANEL_WIDTH)
+                .min_width(380.0)
+                .show(ctx, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            let actions = render::render_control_panel(ui, &mut self.state);
-                            if actions.start { self.handle_start(); }
-                            if actions.stop { self.handle_stop(); }
-                            if actions.continue_run { self.handle_continue(); }
-                            if actions.generate_charts { self.handle_generate_charts(); }
-                            if actions.open_folder { self.handle_open_folder(); }
-                            if actions.refresh_resumable { self.scan_resumable_sessions(); }
-                            if actions.resume_selected { self.handle_resume_selected(); }
-                            if actions.back_to_idle { self.handle_back_to_idle(); }
-                            if actions.dismiss_selected { self.handle_dismiss_selected(); }
-                            if actions.extend { self.handle_extend(); }
-                            if actions.open_review { self.handle_open_review(); }
+                            ui.add_space(4.0);
+                            ui.heading("スコア分布（ライブ）");
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} 件（除外フラグ {} 件）",
+                                    self.live_chart_total, self.live_chart_excluded
+                                ))
+                                .small()
+                                .weak(),
+                            );
+                            ui.add_space(6.0);
+                            if let Some(tex) = &self.live_chart_tex {
+                                // Scale to the panel width, preserving the figure's aspect.
+                                let w = ui.available_width();
+                                let size = tex.size();
+                                let aspect = size[1] as f32 / size[0] as f32;
+                                ui.image((tex.id(), Vec2::new(w, w * aspect)));
+                            }
+                            ui.add_space(10.0);
+                            if let Some(stats) = &self.live_chart_stats {
+                                render::render_live_stats_table(ui, stats);
+                            }
                         });
                 });
-            });
+        }
+
+        // Center: the state-driven control panel (narrow), scrollable so nothing clips.
+        egui::CentralPanel::default().show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let actions = render::render_control_panel(ui, &mut self.state);
+                    if actions.start { self.handle_start(); }
+                    if actions.stop { self.handle_stop(); }
+                    if actions.continue_run { self.handle_continue(); }
+                    if actions.generate_charts { self.handle_generate_charts(); }
+                    if actions.open_folder { self.handle_open_folder(); }
+                    if actions.refresh_resumable { self.scan_resumable_sessions(); }
+                    if actions.resume_selected { self.handle_resume_selected(); }
+                    if actions.back_to_idle { self.handle_back_to_idle(); }
+                    if actions.dismiss_selected { self.handle_dismiss_selected(); }
+                    if actions.extend { self.handle_extend(); }
+                    if actions.open_review { self.handle_open_review(); }
+                });
         });
 
         // Review/edit window (floats over the main panel when open).
@@ -952,10 +1160,17 @@ pub fn run_gui() -> eframe::Result<()> {
         run_hotkey_thread(hotkey_running_clone);
     });
 
+    // Start at the size that matches the persisted live-plot preference, so the
+    // window opens correctly sized instead of resizing on the first frame.
+    let initial_size = if load_gui_settings().show_live_chart {
+        WINDOW_SIZE_EXPANDED
+    } else {
+        WINDOW_SIZE_COLLAPSED
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size(Vec2::new(800.0, 580.0))
-            .with_min_inner_size(Vec2::new(600.0, 450.0))
+            .with_inner_size(initial_size)
+            .with_min_inner_size(Vec2::new(560.0, 450.0))
             .with_title("Gakumas Rehearsal Automation")
             // Disable drag-and-drop to avoid COM conflict with RoInitialize (multithreaded)
             .with_drag_and_drop(false),
